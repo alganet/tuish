@@ -48,36 +48,53 @@ can_run_interactive () {
 
 run_shell_tests () {
 	local shell="$1"
-	local label="$2"
+	local suite="${2:-all}"
 
 	printf '========================================\n'
-	printf '  Shell: %s\n' "$label"
+	printf '  Shell: %s (%s)\n' "$shell" "$suite"
 	printf '========================================\n\n'
 
 	# Unit tests — run in the target shell
-	for test_file in "$TESTS_DIR"/unit/test_*.sh
-	do
-		run_test "$shell" "$test_file" "unit"
-		printf '\n'
-	done
-
-	# Integration tests — run via tmux with the target shell
-	if can_run_interactive "$shell"
+	if test "$suite" = "all" || test "$suite" = "unit"
 	then
-		for test_file in "$TESTS_DIR"/integration/test_*.sh
+		for test_file in "$TESTS_DIR"/unit/test_*.sh
 		do
-			run_test "$shell" "$test_file" "integration"
+			run_test "$shell" "$test_file" "unit"
 			printf '\n'
 		done
-	else
-		printf '  SKIP: integration tests (%s lacks read -n/-k support)\n\n' "$label"
+	fi
+
+	# Integration tests — run via tmux with the target shell
+	if test "$suite" = "all" || test "$suite" = "integration"
+	then
+		if can_run_interactive "$shell"
+		then
+			for test_file in "$TESTS_DIR"/integration/test_*.sh
+			do
+				run_test "$shell" "$test_file" "integration"
+				printf '\n'
+			done
+		else
+			printf '  SKIP: integration tests (%s lacks read -n/-k support)\n\n' "$shell"
+		fi
 	fi
 }
 
-if test $# -gt 0
+# Parse arguments: [--unit|--integration] [shell]
+_suite='all'
+_shell=''
+for _arg in "$@"
+do
+	case "$_arg" in
+		--unit)        _suite='unit';;
+		--integration) _suite='integration';;
+		*)             _shell="$_arg";;
+	esac
+done
+
+if test -n "$_shell"
 then
-	# Run a single shell specified as argument
-	run_shell_tests "$1" "$1"
+	run_shell_tests "$_shell" "$_suite"
 else
 	for shell in bash zsh ksh mksh
 	do
@@ -86,13 +103,13 @@ else
 			printf 'SKIP: %s not found\n\n' "$shell"
 			continue
 		fi
-		run_shell_tests "$shell" "$shell"
+		run_shell_tests "$shell" "$_suite"
 	done
 
 	# busybox sh — separate because the command is two words
 	if command -v busybox >/dev/null 2>&1
 	then
-		run_shell_tests "busybox sh" "busybox sh"
+		run_shell_tests "busybox sh" "$_suite"
 	fi
 fi
 

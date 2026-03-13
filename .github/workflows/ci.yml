@@ -6,9 +6,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
 
 jobs:
   test:
@@ -18,8 +18,9 @@ jobs:
       fail-fast: false
       matrix:
         shell: [bash, zsh, ksh, mksh, busybox-sh]
+        suite: [unit, integration]
 
-    name: test (${{ matrix.shell }})
+    name: ${{ matrix.suite }} (${{ matrix.shell }})
 
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +28,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y tmux
+          sudo apt-get install -y ${{
+            matrix.suite == 'integration' && 'tmux' || '' }}
           case "${{ matrix.shell }}" in
             bash) ;;
             *) sudo apt-get install -y ${{ matrix.shell == 'busybox-sh' && 'busybox' || matrix.shell }} ;;
@@ -39,4 +41,4 @@ jobs:
           case "$shell" in
             busybox-sh) shell="busybox sh" ;;
           esac
-          cd tests && bash run_tests.sh "$shell"
+          cd tests && bash run_tests.sh --${{ matrix.suite }} "$shell"
