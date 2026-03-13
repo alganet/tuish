@@ -8,6 +8,8 @@ SPDX-License-Identifier: ISC
 
 TUI toolkit written in pure portable shell script. No compilation, no subprocesses, requires only `stty` (almost universal).
 
+![Demo](https://i.imgur.com/t8NZbSe.gif)
+
 ## Quick Start
 
 ```sh
@@ -83,6 +85,20 @@ bash examples/boxes.sh        # Box drawing styles and composable layouts
 bash examples/debug.sh        # Live event inspector
 bash examples/width.sh        # Unicode width ACID test
 ```
+
+## Documentation
+
+- [Getting Started](docs/getting-started.md) -- examples, architecture, module system
+- [Core (tui.sh)](docs/tui.md) -- lifecycle, buffering, terminal variables
+- [Terminal Output (term.sh)](docs/term.md) -- cursor, colors, text attributes
+- [Event Loop (event.sh)](docs/event.md) -- event lifecycle, redraw scheduling
+- [HID (hid.sh)](docs/hid.md) -- complete event name reference
+- [Viewport Modes (viewport.sh)](docs/viewport.md) -- fullscreen, fixed, grow
+- [Box Drawing (draw.sh)](docs/draw.md) -- styles, junctions, clipping
+- [String Utilities (str.sh)](docs/str.md) -- Unicode width, substrings
+- [Line Buffer (buf.sh)](docs/buf.md) -- indexed line storage
+- [Key Bindings (keybind.sh)](docs/keybind.md) -- declarative event dispatch
+- [Shell Compatibility](docs/compatibility.md) -- supported shells, limits, workarounds
 
 ## License
 
