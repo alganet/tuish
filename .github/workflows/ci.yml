@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+#
+# SPDX-License-Identifier: ISC
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [bash, zsh, ksh, mksh, busybox-sh]
+
+    name: test (${{ matrix.shell }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux
+          case "${{ matrix.shell }}" in
+            bash) ;;
+            *) sudo apt-get install -y ${{ matrix.shell == 'busybox-sh' && 'busybox' || matrix.shell }} ;;
+          esac
+
+      - name: Run tests
+        run: |
+          shell="${{ matrix.shell }}"
+          case "$shell" in
+            busybox-sh) shell="busybox sh" ;;
+          esac
+          cd tests && bash run_tests.sh "$shell"
