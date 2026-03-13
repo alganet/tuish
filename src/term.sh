@@ -160,11 +160,12 @@ tuish_move_left ()      { _tuish_write "\033[${1:-1}D"; }
 # Clear a rectangular area by writing spaces.
 tuish_clear_region ()
 {
-	local _cr_r=$1 _cr_c=$2 _cr_w=$3 _cr_h=$4 _cr_i=0 _cr_j=0
-	local _cr_spaces=''
-	while test $_cr_j -lt "$_cr_w"; do
-		_cr_spaces="${_cr_spaces} "
-		_cr_j=$((_cr_j + 1))
+	local _cr_r=$1 _cr_c=$2 _cr_w=$3 _cr_h=$4 _cr_i=0
+	local _cr_spaces='' _cr_n=$_cr_w _cr_s=' '
+	while test $_cr_n -gt 0; do
+		test $((_cr_n & 1)) -ne 0 && _cr_spaces="${_cr_spaces}${_cr_s}"
+		_cr_s="${_cr_s}${_cr_s}"
+		_cr_n=$((_cr_n >> 1))
 	done
 	while test $_cr_i -lt $_cr_h; do
 		tuish_vmove $((_cr_r + _cr_i)) "$_cr_c"
