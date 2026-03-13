@@ -6,7 +6,7 @@
 
 # tmux session helpers for tui.sh integration tests
 
-TUISH_SCRIPT="${TUISH_SCRIPT:-$(cd "$(dirname "$0")/../.." && pwd)/src/tui.sh}"
+TUISH_SCRIPT="${TUISH_SCRIPT:-$(cd "$(dirname "$0")/.." && pwd)/lib/event_echo.sh}"
 TUISH_SHELL="${TUISH_SHELL:-bash}"
 TUISH_SESSION="tuish_test_$$"
 

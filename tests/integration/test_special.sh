@@ -72,8 +72,9 @@ assert_event "1e" "ctrl-^" "ctrl-^ (byte 0x1e)"
 # --- Backspace / DEL (0x7f = 127 decimal) ---
 assert_event "7f" "bksp" "backspace"
 
-# --- Ctrl+H (0x08 = 8 decimal, backspace on some terminals) ---
-assert_event "08" "ctrl-h" "ctrl-h (byte 0x08)"
+# --- Ctrl+H / Ctrl+Bksp (0x08 = 8 decimal) ---
+# VT mode maps byte 8 to ctrl-bksp (not ctrl-h)
+assert_event "08" "ctrl-bksp" "ctrl-bksp (byte 0x08)"
 
 # --- Alt+character (ESC followed by 'a' = 0x61) ---
 assert_event "1b 61" "alt-a" "alt-a"

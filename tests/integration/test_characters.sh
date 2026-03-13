@@ -41,7 +41,7 @@ assert_event "40" "char @" "character @"
 assert_event "2f" "char /" "character /"
 
 # Space = 0x20
-assert_event "20" "Space" "space"
+assert_event "20" "space" "space"
 
 quit_tuish
 test_summary
