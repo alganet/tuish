@@ -4,7 +4,7 @@
 #
 # SPDX-License-Identifier: ISC
 
-# Test runner for tui.sh — runs unit tests across available shells
+# Test runner for tui.sh — runs unit and integration tests across available shells
 
 set -eu
 
@@ -60,6 +60,18 @@ run_shell_tests () {
 		run_test "$shell" "$test_file" "unit"
 		printf '\n'
 	done
+
+	# Integration tests — run via tmux with the target shell
+	if can_run_interactive "$shell"
+	then
+		for test_file in "$TESTS_DIR"/integration/test_*.sh
+		do
+			run_test "$shell" "$test_file" "integration"
+			printf '\n'
+		done
+	else
+		printf '  SKIP: integration tests (%s lacks read -n/-k support)\n\n' "$label"
+	fi
 }
 
 if test $# -gt 0
