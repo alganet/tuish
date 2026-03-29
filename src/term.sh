@@ -40,7 +40,7 @@ tuish_print ()
 {
 	local _p="$1"
 	case "$_p" in *'\'*) _p="${_p//\\/\\\\}";; esac
-	test $_tuish_printf -eq 1 && case "$_p" in *%*) _p="${_p//%/%%}";; esac
+	test $_tuish_printf -eq 1 && case "$_p" in *%*) _p="${_p//\%/%%}";; esac
 	_tuish_write "$_p"
 }
 tuish_print_at ()       { tuish_vmove "$1" "$2"; tuish_print "$3"; }
