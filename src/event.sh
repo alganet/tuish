@@ -47,7 +47,7 @@ tuish_on_redraw ()        { :; }
 tuish_has_pending_input ()
 {
 	test -n "${_tuish_pending_byte}" && return 0
-	if _tuish_get_byte -t0 && _tuish_get_byte
+	if _tuish_peek_byte
 	then
 		_tuish_pending_byte="$_tuish_byte"
 		return 0
@@ -122,7 +122,7 @@ _tuish_parse_event ()
 		# Discard any output from the event handler
 		_tuish_buf=''
 		_tuish_buffering=0
-		if test "${_tuish_raf_inhibit:-0}" -eq 0 && _tuish_get_byte -t0 && _tuish_get_byte
+		if test "${_tuish_raf_inhibit:-0}" -eq 0 && _tuish_peek_byte
 		then
 			# More input queued — save byte, skip render
 			_tuish_pending_byte="$_tuish_byte"
@@ -280,10 +280,15 @@ tuish_run ()
 				then
 					if test -n "$_esc"
 					then
+						# Inhibit rAF input-peek: the inner loop still needs to read
+						# the bytes that follow this ESC (next sequence's O, C, etc.).
+						# Without inhibit, the rAF check consumes those bytes first.
+						_tuish_raf_inhibit=1
 						case "${_esc}" in
 							91*|' 79'*) _tuish_parse_event "E ${_esc}";;
 							*) _tuish_parse_event "E 27${_esc}";;
 						esac
+						_tuish_raf_inhibit=0
 					fi
 					_esc=''
 					continue

@@ -101,6 +101,26 @@ sleep 0.3
 
 assert_screen_match "Col 2" "nav: Right arrow moves cursor right"
 
+# ─── Rapid key repeat regression ─────────────────────────────────
+# Regression: on zsh (macOS Terminal.app, Zed), consecutive SS3 sequences
+# sent with no inter-byte gap had ESC bytes consumed by the rAF input-peek,
+# causing 'O'/'C' to leak as inserted characters instead of arrow events.
+
+# Position at start of the line
+send_hex 1b 4f 48
+sleep 0.3
+
+assert_screen_match "Col 1" "rapid-repeat setup: cursor at col 1"
+
+# 3 × ESC O C (right arrows) sent atomically — no gap, as Terminal.app
+# key-repeat delivers them. Before the fix each burst lost an ESC and
+# turned the following O or C into an inserted character.
+send_hex 1b 4f 43 1b 4f 43 1b 4f 43
+sleep 0.5
+
+assert_screen_match "Col 4" "rapid-repeat: cursor at col 4 (3 rights, no leaks)"
+assert_screen_match "Second line" "rapid-repeat: text unchanged (no O/C inserted)"
+
 # ─── Backspace ───────────────────────────────────────────────────
 
 # Move to end of line 2, then backspace
