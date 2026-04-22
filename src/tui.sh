@@ -169,6 +169,9 @@ tuish_init ()
 			test -n "${_tuish_signal:-}" && return 1
 			return 1
 		}
+		# zsh read -t0 reads a byte when one is available (unlike bash which
+		# only checks). One call is enough to peek at the next pending byte.
+		_tuish_peek_byte () { _tuish_get_byte -t0; }
 	elif { echo 1 | read -r -t'0.1' -n 1 2>/dev/null ;}
 	then
 		_tuish_get_byte ()
@@ -179,6 +182,9 @@ tuish_init ()
 		{
 			_tuish_get_byte "$_tuish_idle_timeout"
 		}
+		# bash read -t0 only checks availability without reading; must call
+		# _tuish_get_byte a second time to actually consume the byte.
+		_tuish_peek_byte () { _tuish_get_byte -t0 && _tuish_get_byte; }
 	else
 		echo 'Shell does not support interactive features (requires read -n or read -k)' 1>&2
 		return 1
