@@ -92,7 +92,9 @@ When a user holds down a key, the terminal buffers many keypresses. Without
 scheduling, each keypress triggers a full redraw -- the UI keeps updating
 after the key is released. `tuish_request_redraw` solves this by coalescing
 redraws: state updates happen immediately, but rendering is deferred until
-the input queue is drained.
+the input queue is drained. This applies equally to escape-sequence keys
+(arrows, F-keys): a glued autorepeat burst like `ESC [ B ESC [ B ...`
+coalesces the same way a burst of plain characters does.
 
 | Function                       | Description                                                    |
 |--------------------------------|----------------------------------------------------------------|

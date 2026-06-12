@@ -104,6 +104,7 @@ _tuish_initialized=0
 # Default byte reader (overridden by tuish_init with shell-specific version)
 _tuish_get_byte () { return 1; }
 _tuish_idle_wait () { return 1; }
+_tuish_peek_byte () { return 1; }
 
 TUISH_EVENT=''
 TUISH_EVENT_KIND=''
@@ -182,9 +183,23 @@ tuish_init ()
 		{
 			_tuish_get_byte "$_tuish_idle_timeout"
 		}
-		# bash read -t0 only checks availability without reading; must call
-		# _tuish_get_byte a second time to actually consume the byte.
-		_tuish_peek_byte () { _tuish_get_byte -t0 && _tuish_get_byte; }
+		# read -t0 semantics differ: bash/busybox only check availability
+		# and need a second read to consume; ksh93/mksh consume the byte
+		# on the spot (like zsh). Assuming the wrong one either loses
+		# every other byte and blocks mid-burst (ksh93/mksh) or leaks
+		# sequence bytes (zsh, see 258e6a4). Probe with a heredoc — its
+		# data is in place before read runs, so a zero timeout can't race
+		# the writer the way a pipeline would.
+		_tuish_probe=''
+		if { IFS= read -r -d '' -n 1 -t0 _tuish_probe 2>/dev/null &&
+			test -n "${_tuish_probe}" ;} <<_tuish_heredoc
+1
+_tuish_heredoc
+		then
+			_tuish_peek_byte () { _tuish_get_byte -t0; }
+		else
+			_tuish_peek_byte () { _tuish_get_byte -t0 && _tuish_get_byte; }
+		fi
 	else
 		echo 'Shell does not support interactive features (requires read -n or read -k)' 1>&2
 		return 1
