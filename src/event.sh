@@ -122,10 +122,14 @@ _tuish_parse_event ()
 		# Discard any output from the event handler
 		_tuish_buf=''
 		_tuish_buffering=0
-		if test "${_tuish_raf_inhibit:-0}" -eq 0 && _tuish_peek_byte
+		if test "${_tuish_raf_inhibit:-0}" -eq 1 || tuish_has_pending_input
 		then
-			# More input queued — save byte, skip render
-			_tuish_pending_byte="$_tuish_byte"
+			# More input in flight — leave the redraw pending. When
+			# inhibit is set, the next sequence's ESC byte was already
+			# read, so peeking would eat its body; a later dispatch
+			# with the peek allowed (burst-final timeout path, or an
+			# idle event) fires the redraw.
+			:
 		else
 			# Input exhausted — render now
 			_tuish_redraw_requested=0
@@ -196,21 +200,25 @@ tuish_run ()
 		then
 			local _sig="$_tuish_signal"
 			_tuish_signal=''
-			# Save companion byte (zsh returns it alongside signal);
-			# inhibit rAF input check to protect escape sequences.
+			# If read timed out / failed, no byte to process:
+			# nothing is in flight, so the rAF peek is safe and
+			# signal redraws render immediately
+			if test "${_tuish_noinput:-no}" = "yes"
+			then
+				_tuish_parse_event "S $_sig"
+				_tuish_noinput=no
+				continue
+			fi
+			# A companion byte was read alongside the signal (zsh):
+			# its sequence body is still unread — inhibit the rAF
+			# peek so it can't eat those bytes. The pending redraw
+			# fires when the companion byte's own events dispatch.
 			local _sig_byte="$_tuish_byte"
 			_tuish_raf_inhibit=1
 			_tuish_parse_event "S $_sig"
 			_tuish_raf_inhibit=0
 			_tuish_byte="$_sig_byte"
-			# If read timed out / failed, no byte to process
-			if test "${_tuish_noinput:-no}" = "yes"
-			then
-				_tuish_noinput=no
-				continue
-			fi
-			# A byte was read alongside the signal; fall through
-			# to process it
+			# Fall through to process the companion byte
 		elif test "${_tuish_noinput:-no}" = "yes"
 		then
 			_tuish_parse_event "F"
@@ -282,7 +290,8 @@ tuish_run ()
 					then
 						# Inhibit rAF input-peek: the inner loop still needs to read
 						# the bytes that follow this ESC (next sequence's O, C, etc.).
-						# Without inhibit, the rAF check consumes those bytes first.
+						# The rAF check defers the redraw instead of peeking; the
+						# burst-final sequence (timeout path below) fires it.
 						_tuish_raf_inhibit=1
 						case "${_esc}" in
 							91*|' 79'*) _tuish_parse_event "E ${_esc}";;

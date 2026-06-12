@@ -36,6 +36,7 @@ reset_state () {
 	_tuish_held=''
 	_tuish_redraw_requested=0
 	_tuish_redraw_level=0
+	_tuish_raf_inhibit=0
 	_tuish_pending_byte=''
 	_event_log=''
 	_redraw_count=0
@@ -210,5 +211,75 @@ tuish_on_event () {
 tuish_on_redraw () { _redraw_level="$1"; }
 _tuish_parse_event "C a"
 assert_eq "$_redraw_level" "2" "flush: redraw level preserved after flush"
+
+# --- rAF inhibit: redraw deferred, request stays pending ---
+# Glued escape-sequence bursts dispatch with _tuish_raf_inhibit=1
+# (more input known in flight); the render must be skipped, not fired.
+reset_state
+tuish_on_event () { tuish_print "discard_me"; tuish_request_redraw 2; }
+tuish_on_redraw () { _redraw_count=$((_redraw_count + 1)); tuish_print "drawn"; }
+_tuish_raf_inhibit=1
+_tuish_parse_event "C a"
+_tuish_raf_inhibit=0
+assert_eq "$_redraw_count" "0" "inhibit: render deferred"
+assert_eq "$_tuish_redraw_requested" "1" "inhibit: request stays pending"
+assert_eq "$_tuish_redraw_level" "2" "inhibit: level preserved"
+case "$_captured" in
+	*discard_me*|*drawn*) assert_eq "output" "empty" "inhibit: handler output discarded, no render output";;
+	*) assert_eq "1" "1" "inhibit: handler output discarded, no render output";;
+esac
+
+# --- Glued burst: inhibit 1/1/0 -> exactly one redraw at max level ---
+reset_state
+tuish_on_event () { tuish_request_redraw 1; }
+tuish_on_redraw () { _redraw_count=$((_redraw_count + 1)); _redraw_level="$1"; }
+_tuish_raf_inhibit=1
+_tuish_parse_event "E 91 66"
+tuish_on_event () { tuish_request_redraw 3; }
+_tuish_parse_event "E 91 66"
+_tuish_raf_inhibit=0
+tuish_on_event () { tuish_request_redraw 1; }
+_tuish_parse_event "E 91 66"
+assert_eq "$_redraw_count" "1" "glued burst: exactly one redraw"
+assert_eq "$_redraw_level" "3" "glued burst: max level across burst"
+assert_eq "$_tuish_redraw_requested" "0" "glued burst: flag cleared after render"
+
+# --- Pending redraw fires on idle even if idle requests nothing ---
+reset_state
+tuish_on_event () { tuish_request_redraw 2; }
+tuish_on_redraw () { _redraw_count=$((_redraw_count + 1)); _redraw_level="$1"; }
+_tuish_raf_inhibit=1
+_tuish_parse_event "C a"
+_tuish_raf_inhibit=0
+assert_eq "$_redraw_count" "0" "idle fallback: deferred while inhibited"
+tuish_on_event () { :; }
+_tuish_parse_event "F"
+assert_eq "$_redraw_count" "1" "idle fallback: pending redraw fires on idle"
+assert_eq "$_redraw_level" "2" "idle fallback: level preserved to idle"
+
+# --- Signal mid-burst neither fires nor loses the pending redraw ---
+reset_state
+tuish_on_event () { tuish_request_redraw 2; }
+tuish_on_redraw () { _redraw_count=$((_redraw_count + 1)); _redraw_level="$1"; }
+_tuish_raf_inhibit=1
+_tuish_parse_event "E 91 66"
+tuish_on_event () { :; }
+_tuish_parse_event "S winch"
+_tuish_raf_inhibit=0
+assert_eq "$_redraw_count" "0" "signal mid-burst: still deferred"
+assert_eq "$_tuish_redraw_requested" "1" "signal mid-burst: request not lost"
+assert_eq "$_tuish_redraw_level" "2" "signal mid-burst: level not lost"
+_tuish_parse_event "F"
+assert_eq "$_redraw_count" "1" "signal mid-burst: redraw fires after burst"
+
+# --- Saved pending byte defers render and is not clobbered ---
+reset_state
+_tuish_pending_byte='x'
+tuish_on_event () { tuish_request_redraw; }
+tuish_on_redraw () { _redraw_count=$((_redraw_count + 1)); }
+_tuish_parse_event "C a"
+assert_eq "$_redraw_count" "0" "pending byte: render deferred"
+assert_eq "$_tuish_pending_byte" "x" "pending byte: saved byte not clobbered"
+assert_eq "$_tuish_redraw_requested" "1" "pending byte: request stays pending"
 
 test_summary
