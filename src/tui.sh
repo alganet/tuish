@@ -187,18 +187,32 @@ tuish_init ()
 		# and need a second read to consume; ksh93/mksh consume the byte
 		# on the spot (like zsh). Assuming the wrong one either loses
 		# every other byte and blocks mid-burst (ksh93/mksh) or leaks
-		# sequence bytes (zsh, see 258e6a4). Probe with a heredoc — its
-		# data is in place before read runs, so a zero timeout can't race
-		# the writer the way a pipeline would.
-		_tuish_probe=''
-		if { IFS= read -r -d '' -n 1 -t0 _tuish_probe 2>/dev/null &&
-			test -n "${_tuish_probe}" ;} <<_tuish_heredoc
-1
-_tuish_heredoc
+		# sequence bytes (zsh, see 258e6a4).
+		#
+		# ksh93 and mksh both set KSH_VERSION and both consume on -t0, so
+		# select by shell identity. A runtime probe is unreliable here:
+		# mksh's own `read -d '' -n 1 -t0` on a heredoc is non-deterministic
+		# (it intermittently reports no data), which would sometimes pick the
+		# two-read variant and then drop one byte on every peek that finds
+		# input — the source of mksh's burst-event flakiness.
+		if test -n "${KSH_VERSION:-}"
 		then
 			_tuish_peek_byte () { _tuish_get_byte -t0; }
 		else
-			_tuish_peek_byte () { _tuish_get_byte -t0 && _tuish_get_byte; }
+			# bash/busybox: probe with a heredoc — its data is in place
+			# before read runs, so a zero timeout can't race the writer
+			# the way a pipeline would. (Stable: both report no data, so
+			# both take the two-read consume path.)
+			_tuish_probe=''
+			if { IFS= read -r -d '' -n 1 -t0 _tuish_probe 2>/dev/null &&
+				test -n "${_tuish_probe}" ;} <<_tuish_heredoc
+1
+_tuish_heredoc
+			then
+				_tuish_peek_byte () { _tuish_get_byte -t0; }
+			else
+				_tuish_peek_byte () { _tuish_get_byte -t0 && _tuish_get_byte; }
+			fi
 		fi
 	else
 		echo 'Shell does not support interactive features (requires read -n or read -k)' 1>&2
