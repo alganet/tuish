@@ -145,7 +145,7 @@ Notable entries:
 | `enter`     | 0x0D (13) | Functional: Enter (CR) takes precedence over Ctrl+M |
 | `ctrl-q`    | 0x11 (17) | Requires `-ixon`                                    |
 | `ctrl-s`    | 0x13 (19) | Requires `-ixon`                                    |
-| `ctrl-bksp` | 0x17 (23) | Some terminals send this for Ctrl+Backspace         |
+| `ctrl-w`    | 0x17 (23) | Kept as Ctrl+W in VT; some terminals send it for Ctrl+Backspace |
 | `ctrl-z`    | 0x1A (26) | Requires `-isig`                                    |
 
 > Ctrl+letter produces the same byte regardless of Shift — `Ctrl+Z` and
@@ -165,14 +165,16 @@ functional keys are more commonly bound in applications:
 | 9    | HT         | Ctrl+I      | Tab                             | `tab`         |
 | 10   | LF         | Ctrl+J      | Enter (line feed)               | `enter`       |
 | 13   | CR         | Ctrl+M      | Enter (carriage return)         | `enter`       |
-| 23   | ETB        | Ctrl+W      | Ctrl+Backspace (some terminals) | `ctrl-bksp`   |
+| 23   | ETB        | Ctrl+W      | Ctrl+Backspace (some terminals) | `ctrl-w`      |
 | 27   | ESC        | Ctrl+[      | Escape                          | `esc`         |
 
 Byte 23 is notable: most terminals send byte 23 for Ctrl+W, but some
 (e.g. Windows Terminal, some xterm configurations) send byte 23 for
-Ctrl+Backspace. Since this byte is mapped to `ctrl-bksp`, applications that
-want to bind Ctrl+W should either use the kitty protocol (where Ctrl+W arrives
-unambiguously via CSI u) or bind `ctrl-bksp` and accept the dual mapping.
+Ctrl+Backspace. In the VT protocol tui.sh keeps the Ctrl+letter identity and
+emits `ctrl-w`, so on those terminals Ctrl+Backspace also surfaces as `ctrl-w`.
+Applications that need to tell the two apart should use the kitty protocol,
+where Ctrl+W arrives unambiguously via CSI u (and a terminal that still leaks a
+raw byte 23 in kitty mode is mapped to `ctrl-bksp`).
 
 In **kitty mode**, these collisions are largely resolved. Real Ctrl+letter
 combinations arrive via CSI u sequences with unambiguous keycodes. Some

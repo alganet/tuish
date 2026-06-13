@@ -86,6 +86,10 @@ tui.sh configures the terminal at startup and restores it on exit:
 | Bracketed paste    | `ESC[?2004h`         | Paste start/end markers                           |
 | Application cursor | `ESC[?1h`            | SS3 arrow keys                                    |
 | Focus events       | `ESC[?1004h`         | Focus in/out reporting                            |
-| Kitty keyboard     | `ESC[>9u`            | CSI u key events (flags: disambiguate + all keys) |
 
 All modes are disabled on exit, and `stty` is restored to its previous state.
+
+The kitty keyboard protocol (`ESC[>9u`, CSI u key events) is **not** enabled
+at startup — `TUISH_PROTOCOL` defaults to `vt`. Opt in by calling
+`tuish_kitty_on` (it probes for support and falls back to VT if absent);
+`tuish_kitty_off` and `tuish_fini` restore it.
