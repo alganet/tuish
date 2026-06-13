@@ -532,6 +532,11 @@ _tuish_draw_box_impl ()
 	fi
 
 	# ── Middle rows ──
+	# Borders and fill are loop-invariant: build the row body once and
+	# emit a single write per row.
+	local _midrow=$_fill
+	test $_bl -eq 1 && _midrow="${_tuish_draw_ch_v}${_midrow}"
+	test $_br -eq 1 && _midrow="${_midrow}${_tuish_draw_ch_v}"
 	local _r=0
 	test $_bt -eq 1 && _r=1
 	local _mid_end=$_h
@@ -539,17 +544,7 @@ _tuish_draw_box_impl ()
 	while test $_r -lt $_mid_end
 	do
 		tuish_vmove $((_row + _r)) $_col || :
-
-		if test $_bl -eq 1
-		then _tuish_write "$_tuish_draw_ch_v"
-		fi
-
-		_tuish_write "$_fill"
-
-		if test $_br -eq 1
-		then _tuish_write "$_tuish_draw_ch_v"
-		fi
-
+		_tuish_write "$_midrow"
 		_r=$((_r + 1))
 	done
 
