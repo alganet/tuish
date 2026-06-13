@@ -14,8 +14,6 @@
 #
 # Internal:
 #   _tuish_resolve_event    - overrides event.sh stub with full resolution
-#   _tuish_5code_modifiers  - VT 5-code modifier helper
-#   _tuish_6code_modifiers  - VT 6-code modifier helper
 
 # ─── HID state ────────────────────────────────────────────────────
 # _tuish_kitty_raw, _tuish_mouse, _tuish_detailed, _tuish_modkeys,
@@ -129,36 +127,6 @@ tuish_wrap_off ()
 	_tuish_wrap=0
 }
 
-# ─── Internal: modifier helpers ─────────────────────────────────────
-
-_tuish_5code_modifiers ()
-{
-	case "${1}" in
-		"91 ${2} 59 49 ${4}" ) TUISH_EVENT="${3}";;
-		"91 ${2} 59 50 ${4}" ) TUISH_EVENT="shift-${3}";;
-		"91 ${2} 59 51 ${4}" ) TUISH_EVENT="alt-${3}";;
-		"91 ${2} 59 52 ${4}" ) TUISH_EVENT="alt-shift-${3}";;
-		"91 ${2} 59 53 ${4}" ) TUISH_EVENT="ctrl-${3}";;
-		"91 ${2} 59 54 ${4}" ) TUISH_EVENT="ctrl-shift-${3}";;
-		"91 ${2} 59 55 ${4}" ) TUISH_EVENT="ctrl-alt-${3}";;
-		"91 ${2} 59 56 ${4}" ) TUISH_EVENT="ctrl-alt-shift-${3}";;
-	esac
-}
-
-_tuish_6code_modifiers ()
-{
-	case "${1}" in
-		"91 ${2} ${4} 59 49 126" ) TUISH_EVENT="${3}";;
-		"91 ${2} ${4} 59 50 126" ) TUISH_EVENT="shift-${3}";;
-		"91 ${2} ${4} 59 51 126" ) TUISH_EVENT="alt-${3}";;
-		"91 ${2} ${4} 59 52 126" ) TUISH_EVENT="alt-shift-${3}";;
-		"91 ${2} ${4} 59 53 126" ) TUISH_EVENT="ctrl-${3}";;
-		"91 ${2} ${4} 59 54 126" ) TUISH_EVENT="ctrl-shift-${3}";;
-		"91 ${2} ${4} 59 55 126" ) TUISH_EVENT="ctrl-alt-${3}";;
-		"91 ${2} ${4} 59 56 126" ) TUISH_EVENT="ctrl-alt-shift-${3}";;
-	esac
-}
-
 # ─── Event name resolution ────────────────────────────────────────
 # Overrides the stub in event.sh.  Resolves M/m (mouse), E (keyboard),
 # C (character), and K (CSI u / kitty protocol) event classes into
@@ -167,6 +135,21 @@ _tuish_6code_modifiers ()
 _tuish_resolve_event ()
 {
 	local _class=$1
+
+	# Class C (printable typing) is by far the most frequent event: resolve
+	# it first and return, so it never falls through the mouse/keyboard
+	# branches. Reaching it last was a large per-keystroke cost (~7x in bash).
+	if test "$_class" = 'C'
+	then
+		TUISH_EVENT_KIND='key'
+		if test "${2:-}" != '\'
+		then
+			TUISH_EVENT="${2:+char }${2:-space}"
+		else
+			TUISH_EVENT="char bslash"
+		fi
+		return
+	fi
 
 	if test "${_class}" = 'M' || test "${_class}" = 'm'
 	then
@@ -331,33 +314,59 @@ _tuish_resolve_event ()
 			'91 54 126' ) TUISH_EVENT='pgdn';;
 		esac
 
+		# Modified nav/function keys. Single-pass replacement for what used
+		# to be up to 24 sequential per-key case matches: map (base sequence,
+		# final) → base name in one case, then (modifier code) → prefix in one
+		# case. Two shapes after event-type stripping above:
+		#   5-code: "91 <base> 59 <mod> <final>"
+		#   6-code: "91 <base> <extra> 59 <mod> 126"
+		# The modifier slot is matched as exactly two digits ([0-9][0-9], the
+		# byte code of digits 1-8), and each arm anchors the head fully up to
+		# " 59 ": this rejects sequences with extra parameters (matching the
+		# old exact-match behavior) and keeps f5/f6/… from prefix-colliding.
 		if test -z "$TUISH_EVENT"
 		then
-		_tuish_5code_modifiers "$_e_seq" '49' 'up' '65'
-		_tuish_5code_modifiers "$_e_seq" '49' 'down' '66'
-		_tuish_5code_modifiers "$_e_seq" '49' 'right' '67'
-		_tuish_5code_modifiers "$_e_seq" '49' 'left' '68'
-
-		_tuish_5code_modifiers "$_e_seq" '49' 'f1' '80'
-		_tuish_5code_modifiers "$_e_seq" '49' 'f2' '81'
-		_tuish_5code_modifiers "$_e_seq" '49' 'f3' '82'
-		_tuish_5code_modifiers "$_e_seq" '49' 'f4' '83'
-
-		_tuish_6code_modifiers "$_e_seq" '49' 'f5' '53'
-		_tuish_6code_modifiers "$_e_seq" '49' 'f6' '55'
-		_tuish_6code_modifiers "$_e_seq" '49' 'f7' '56'
-		_tuish_6code_modifiers "$_e_seq" '49' 'f8' '57'
-		_tuish_6code_modifiers "$_e_seq" '50' 'f9' '48'
-		_tuish_6code_modifiers "$_e_seq" '50' 'f10' '49'
-		_tuish_6code_modifiers "$_e_seq" '50' 'f11' '51'
-		_tuish_6code_modifiers "$_e_seq" '50' 'f12' '52'
-
-		_tuish_5code_modifiers "$_e_seq" '49' 'home' '72'
-		_tuish_5code_modifiers "$_e_seq" '49' 'end' '70'
-		_tuish_5code_modifiers "$_e_seq" '50' 'ins' '126'
-		_tuish_5code_modifiers "$_e_seq" '51' 'del' '126'
-		_tuish_5code_modifiers "$_e_seq" '53' 'pgup' '126'
-		_tuish_5code_modifiers "$_e_seq" '54' 'pgdn' '126'
+			local _em_base=''
+			case "$_e_seq" in
+				'91 49 59 '[0-9][0-9]' 65')   _em_base='up';;
+				'91 49 59 '[0-9][0-9]' 66')   _em_base='down';;
+				'91 49 59 '[0-9][0-9]' 67')   _em_base='right';;
+				'91 49 59 '[0-9][0-9]' 68')   _em_base='left';;
+				'91 49 59 '[0-9][0-9]' 80')   _em_base='f1';;
+				'91 49 59 '[0-9][0-9]' 81')   _em_base='f2';;
+				'91 49 59 '[0-9][0-9]' 82')   _em_base='f3';;
+				'91 49 59 '[0-9][0-9]' 83')   _em_base='f4';;
+				'91 49 59 '[0-9][0-9]' 72')   _em_base='home';;
+				'91 49 59 '[0-9][0-9]' 70')   _em_base='end';;
+				'91 50 59 '[0-9][0-9]' 126')  _em_base='ins';;
+				'91 51 59 '[0-9][0-9]' 126')  _em_base='del';;
+				'91 53 59 '[0-9][0-9]' 126')  _em_base='pgup';;
+				'91 54 59 '[0-9][0-9]' 126')  _em_base='pgdn';;
+				'91 49 53 59 '[0-9][0-9]' 126') _em_base='f5';;
+				'91 49 55 59 '[0-9][0-9]' 126') _em_base='f6';;
+				'91 49 56 59 '[0-9][0-9]' 126') _em_base='f7';;
+				'91 49 57 59 '[0-9][0-9]' 126') _em_base='f8';;
+				'91 50 48 59 '[0-9][0-9]' 126') _em_base='f9';;
+				'91 50 49 59 '[0-9][0-9]' 126') _em_base='f10';;
+				'91 50 51 59 '[0-9][0-9]' 126') _em_base='f11';;
+				'91 50 52 59 '[0-9][0-9]' 126') _em_base='f12';;
+			esac
+			if test -n "$_em_base"
+			then
+				# Modifier code = token immediately after " 59 ".
+				local _em_mod="${_e_seq#* 59 }"
+				_em_mod="${_em_mod%% *}"
+				case "$_em_mod" in
+					49) TUISH_EVENT="$_em_base";;
+					50) TUISH_EVENT="shift-$_em_base";;
+					51) TUISH_EVENT="alt-$_em_base";;
+					52) TUISH_EVENT="alt-shift-$_em_base";;
+					53) TUISH_EVENT="ctrl-$_em_base";;
+					54) TUISH_EVENT="ctrl-shift-$_em_base";;
+					55) TUISH_EVENT="ctrl-alt-$_em_base";;
+					56) TUISH_EVENT="ctrl-alt-shift-$_em_base";;
+				esac
+			fi
 		fi
 
 		if test -z "${TUISH_EVENT}"
@@ -449,16 +458,6 @@ _tuish_resolve_event ()
 			focus-*) TUISH_EVENT_KIND='focus';;
 			paste-*) TUISH_EVENT_KIND='paste';;
 		esac
-
-	elif test "$_class" = 'C'
-	then
-		TUISH_EVENT_KIND='key'
-		if test "${2:-}" != '\'
-		then
-			TUISH_EVENT="${2:+char }${2:-space}"
-		else
-			TUISH_EVENT="char bslash"
-		fi
 
 	elif test "$_class" = 'K'
 	then
