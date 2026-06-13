@@ -87,4 +87,15 @@ _t='über'
 tuish_str_width _t
 assert_eq "$_tuish_swidth" "4" "width: Latin umlaut"
 
+# --- Combining marks (zero width) ---
+# Base letter + U+20DB (combining mark for symbols, U+20D0-U+20FF range)
+_t='a⃛'
+tuish_str_width _t
+assert_eq "$_tuish_swidth" "1" "width: base + combining mark for symbols"
+
+# Base letter + U+1DC0 (combining diacritical marks supplement, U+1DC0-U+1DFF)
+_t='a᷀'
+tuish_str_width _t
+assert_eq "$_tuish_swidth" "1" "width: base + combining diacritical supplement"
+
 test_summary
