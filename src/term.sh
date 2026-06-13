@@ -43,7 +43,7 @@ tuish_print ()
 	test $_tuish_printf -eq 1 && case "$_p" in *%*) _p="${_p//\%/%%}";; esac
 	_tuish_write "$_p"
 }
-tuish_print_at ()       { tuish_vmove "$1" "$2"; tuish_print "$3"; }
+tuish_print_at ()       { if tuish_vmove "$1" "$2"; then tuish_print "$3"; fi; _tuish_clipped=0; }
 tuish_clear_line ()     { _tuish_write '\033[2K'; }
 tuish_clear_to_eol ()   { _tuish_write '\033[K'; }
 tuish_clear_screen ()   { _tuish_write '\033[2J'; }
@@ -168,8 +168,10 @@ tuish_clear_region ()
 		_cr_n=$((_cr_n >> 1))
 	done
 	while test $_cr_i -lt $_cr_h; do
-		tuish_vmove $((_cr_r + _cr_i)) "$_cr_c"
-		_tuish_write "$_cr_spaces"
+		if tuish_vmove $((_cr_r + _cr_i)) "$_cr_c"
+		then _tuish_write "$_cr_spaces"
+		fi
 		_cr_i=$((_cr_i + 1))
 	done
+	_tuish_clipped=0
 }
