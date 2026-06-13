@@ -147,8 +147,13 @@ _tuish_char_width ()
 		_tuish_cw=1
 	elif test $1 -lt 4448
 	then
-		# Hangul Jamo (U+1100-U+115F)
+		# Hangul Jamo leading consonants (U+1100-U+115F)
 		_tuish_cw=2
+	elif test $1 -lt 4608
+	then
+		# Hangul Jamo medial vowels & final consonants
+		# (U+1160-U+11FF) are conjoining — zero width.
+		_tuish_cw=0
 	elif test $1 -lt 8203
 	then
 		# Check specific zero-width and combining ranges

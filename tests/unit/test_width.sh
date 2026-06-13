@@ -98,4 +98,10 @@ _t='a᷀'
 tuish_str_width _t
 assert_eq "$_tuish_swidth" "1" "width: base + combining diacritical supplement"
 
+# Decomposed Hangul syllable: leading U+1100 (width 2) + conjoining medial
+# U+1161 (0) + conjoining final U+11A8 (0) = 2 columns total.
+_t='각'
+tuish_str_width _t
+assert_eq "$_tuish_swidth" "2" "width: decomposed Hangul (leading + conjoining jamo)"
+
 test_summary

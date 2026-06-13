@@ -63,8 +63,12 @@ tuish_begin ()          { _tuish_clipped=0; _tuish_buffering=1; _tuish_buf=''; }
 tuish_end ()            { test -n "$_tuish_buf" && _tuish_out "$_tuish_buf"; _tuish_buf=''; _tuish_buffering=0; }
 tuish_flush ()          { test -n "$_tuish_buf" && _tuish_out "$_tuish_buf"; _tuish_buf=''; }
 
-tuish_save_cursor ()    { _tuish_write '\x1b7'; }
-tuish_restore_cursor () { _tuish_write '\0338'; }
+# DECSC/DECRC are ESC followed by a digit. Emit a literal ESC byte (from
+# the ord table) rather than a backslash escape, because no single escape
+# form survives every shell's printf/echo: `\x1b7` reads as hex 0x1b7 on
+# ksh93, and `\0337` reads as octal 337 on mksh — both swallow the digit.
+tuish_save_cursor ()    { _tuish_write "${_tuish_chr_27}7"; }
+tuish_restore_cursor () { _tuish_write "${_tuish_chr_27}8"; }
 tuish_show_cursor ()    { _tuish_write '\033[?25h'; }
 tuish_hide_cursor ()    { _tuish_write '\033[?25l'; }
 tuish_cursor ()         { :; }
