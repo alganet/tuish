@@ -513,7 +513,7 @@ _tuish_draw_box_impl ()
 	# ── Top border ──
 	if test $_bt -eq 1
 	then
-		tuish_vmove $_row $_col
+		tuish_vmove $_row $_col || :
 		local _top=''
 		if test $_clip_l -eq 0; then
 			if test $_bl -eq 1
@@ -538,7 +538,7 @@ _tuish_draw_box_impl ()
 	test $_bb -eq 1 && _mid_end=$((_h - 1))
 	while test $_r -lt $_mid_end
 	do
-		tuish_vmove $((_row + _r)) $_col
+		tuish_vmove $((_row + _r)) $_col || :
 
 		if test $_bl -eq 1
 		then _tuish_write "$_tuish_draw_ch_v"
@@ -556,7 +556,7 @@ _tuish_draw_box_impl ()
 	# ── Bottom border ──
 	if test $_bb -eq 1
 	then
-		tuish_vmove $((_row + _h - 1)) $_col
+		tuish_vmove $((_row + _h - 1)) $_col || :
 		local _bot=''
 		if test $_clip_l -eq 0; then
 			if test $_bl -eq 1
@@ -574,7 +574,7 @@ _tuish_draw_box_impl ()
 		_tuish_write "$_bot"
 	fi
 
-	tuish_sgr_reset
+	_tuish_clipped=0; tuish_sgr_reset
 }
 
 # ─── Public API ───────────────────────────────────────────────────
@@ -721,7 +721,7 @@ tuish_draw_hdiv ()
 	_tuish_draw_set_fg $_tuish_draw_opt_fg
 	test $_tuish_draw_ch_bold -eq 1 && tuish_bold
 
-	tuish_vmove $_row $_col
+	tuish_vmove $_row $_col || :
 	local _inner=$_w
 	test $_clip_l -eq 0 && _inner=$((_inner - 1))
 	test $_clip_r -eq 0 && _inner=$((_inner - 1))
@@ -732,7 +732,7 @@ tuish_draw_hdiv ()
 	_out="${_out}${_tuish_srepeated}"
 	test $_clip_r -eq 0 && _out="${_out}${_tuish_draw_ch_tee_l}"
 	_tuish_write "$_out"
-	tuish_sgr_reset
+	_tuish_clipped=0; tuish_sgr_reset
 }
 
 # ─── Vertical divider: ┬│┴  (or ╤│╧ with join=) ────────────────
@@ -756,7 +756,7 @@ tuish_draw_vdiv ()
 
 	# Top T (only if not clipped)
 	if test $_tuish_draw_ct -eq 0; then
-		tuish_vmove $_row $_col
+		tuish_vmove $_row $_col || :
 		_tuish_write "$_tuish_draw_ch_tee_d"
 	fi
 
@@ -767,17 +767,17 @@ tuish_draw_vdiv ()
 	local _r=$_r_start
 	while test $_r -le $_r_end
 	do
-		tuish_vmove $((_row + _r)) $_col
+		tuish_vmove $((_row + _r)) $_col || :
 		_tuish_write "$_tuish_draw_ch_v"
 		_r=$((_r + 1))
 	done
 
 	# Bottom T (only if not clipped)
 	if test $_tuish_draw_cb -eq 0; then
-		tuish_vmove $((_row + _h - 1)) $_col
+		tuish_vmove $((_row + _h - 1)) $_col || :
 		_tuish_write "$_tuish_draw_ch_tee_u"
 	fi
-	tuish_sgr_reset
+	_tuish_clipped=0; tuish_sgr_reset
 }
 
 # ─── Bare horizontal line: ───── ────────────────────────────────
@@ -815,10 +815,10 @@ tuish_draw_hline ()
 	_tuish_draw_set_fg $_tuish_draw_opt_fg
 	test $_tuish_draw_ch_bold -eq 1 && tuish_bold
 
-	tuish_vmove $_row $_col
+	tuish_vmove $_row $_col || :
 	_tuish_str_repeat "$_tuish_draw_ch_h" $_w
 	_tuish_write "$_tuish_srepeated"
-	tuish_sgr_reset
+	_tuish_clipped=0; tuish_sgr_reset
 }
 
 # ─── Bare vertical line: │││ ────────────────────────────────────
@@ -844,11 +844,11 @@ tuish_draw_vline ()
 	local _r=0
 	while test $_r -lt $_h
 	do
-		tuish_vmove $((_row + _r)) $_col
+		tuish_vmove $((_row + _r)) $_col || :
 		_tuish_write "$_tuish_draw_ch_v"
 		_r=$((_r + 1))
 	done
-	tuish_sgr_reset
+	_tuish_clipped=0; tuish_sgr_reset
 }
 
 # ─── Cross/junction: ┼  (style=horizontal, join=vertical) ───────
@@ -868,9 +868,9 @@ tuish_draw_cross ()
 	_tuish_draw_set_fg $_tuish_draw_opt_fg
 	test $_tuish_draw_ch_bold -eq 1 && tuish_bold
 
-	tuish_vmove $_row $_col
+	tuish_vmove $_row $_col || :
 	_tuish_write "$_tuish_draw_ch_cross"
-	tuish_sgr_reset
+	_tuish_clipped=0; tuish_sgr_reset
 }
 
 # ─── Tee/T-junction: ├ ┤ ┬ ┴  (single character) ──────────────
@@ -890,14 +890,14 @@ tuish_draw_tee ()
 	_tuish_draw_set_fg $_tuish_draw_opt_fg
 	test $_tuish_draw_ch_bold -eq 1 && tuish_bold
 
-	tuish_vmove $_row $_col
+	tuish_vmove $_row $_col || :
 	case "$_dir" in
 		r) _tuish_write "$_tuish_draw_ch_tee_r";;
 		l) _tuish_write "$_tuish_draw_ch_tee_l";;
 		d) _tuish_write "$_tuish_draw_ch_tee_d";;
 		u) _tuish_write "$_tuish_draw_ch_tee_u";;
 	esac
-	tuish_sgr_reset
+	_tuish_clipped=0; tuish_sgr_reset
 }
 
 # ─── Text rendering ─────────────────────────────────────────────
@@ -963,9 +963,9 @@ tuish_draw_text ()
 	# Nothing to print after clipping
 	test -z "$_dt_text" && return 0
 
-	tuish_vmove $_dt_tr $_dt_tc
+	tuish_vmove $_dt_tr $_dt_tc || :
 	_tuish_draw_set_fg $_dt_fg
 	_tuish_draw_set_bg $_dt_bg
 	tuish_print "$_dt_text"
-	tuish_sgr_reset
+	_tuish_clipped=0; tuish_sgr_reset
 }
