@@ -158,10 +158,9 @@ _tuish_char_width ()
 		elif test $1 -ge 7616 && test $1 -le 7679
 		then
 			_tuish_cw=0  # Combining Diacritical Marks Supplement (U+1DC0-U+1DFF)
-		elif test $1 -ge 8400 && test $1 -le 8447
-		then
-			_tuish_cw=0  # Combining Diacritical Marks for Symbols (U+20D0-U+20FF)
 		else
+			# U+20D0-U+20FF (Combining marks for symbols) is > 8203,
+			# so it cannot occur here — handled in the < 8986 branch.
 			_tuish_cw=1
 		fi
 		return
@@ -263,10 +262,9 @@ _tuish_char_width ()
 		elif test $1 -eq 11093
 		then
 			_tuish_cw=2  # ⭕ (U+2B55)
-		elif test $1 -ge 8400 && test $1 -le 8447
-		then
-			_tuish_cw=0  # Combining marks for symbols (U+20D0-U+20FF)
 		else
+			# U+20D0-U+20FF (Combining marks for symbols) is < 8988,
+			# so it cannot occur here — handled in the < 8986 branch.
 			_tuish_cw=1
 		fi
 	elif test $1 -lt 12352
