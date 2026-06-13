@@ -230,13 +230,11 @@ assert_eq "$TUISH_EVENT" "paste-end" "paste end"
 
 # --- Insert with modifiers (fixed from del) ---
 reset_state
-TUISH_EVENT=''
-_tuish_5code_modifiers "91 50 59 53 126" '50' 'ins' '126'
+_tuish_parse_event "E 91 50 59 53 126"
 assert_eq "$TUISH_EVENT" "ctrl-ins" "ctrl-ins"
 
 reset_state
-TUISH_EVENT=''
-_tuish_5code_modifiers "91 50 59 50 126" '50' 'ins' '126'
+_tuish_parse_event "E 91 50 59 50 126"
 assert_eq "$TUISH_EVENT" "shift-ins" "shift-ins"
 
 # --- Unknown sequence ---
@@ -364,14 +362,12 @@ assert_eq "$TUISH_EVENT" "ctrl-up" "ctrl-up press (event type :1 stripped)"
 # --- Modifier-1 entries (unmodified key with explicit ;1) ---
 # CSI 1 ; 1 A -> up with modifier 1 (no modifier)
 reset_state
-TUISH_EVENT=''
-_tuish_5code_modifiers "91 49 59 49 65" '49' 'up' '65'
+_tuish_parse_event "E 91 49 59 49 65"
 assert_eq "$TUISH_EVENT" "up" "modifier-1 up (5code)"
 
 # CSI 15 ; 1 ~ -> F5 with modifier 1
 reset_state
-TUISH_EVENT=''
-_tuish_6code_modifiers "91 49 53 59 49 126" '49' 'f5' '53'
+_tuish_parse_event "E 91 49 53 59 49 126"
 assert_eq "$TUISH_EVENT" "f5" "modifier-1 F5 (6code)"
 
 # --- CSI u: printable characters produce char prefix ---

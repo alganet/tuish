@@ -12,8 +12,10 @@
 # Dependencies: compat.sh (_tuish_printf, _tuish_out(), alias local=typeset)
 
 # ─── ASCII lookup tables ─────────────────────────────────────────
-# Precomputed chr (code→char) and ord (char→code) tables for codes 1-127.
+# Precomputed chr (code→char) and ord (char→code) tables for codes 1-255.
 # Avoids repeated subshell forks in event parsing and string width.
+# Bytes 128-255 (UTF-8 lead/continuation) feed the fork-free _tuish_ord_hi
+# fallback below; byte 0 is never stored (can't live in a shell variable).
 
 _tuish_init_tables ()
 {
@@ -21,7 +23,7 @@ _tuish_init_tables ()
 	if printf -v _chr 'x' >/dev/null 2>&1 && test "$_chr" = 'x'
 	then
 		# bash/zsh: printf -v avoids all subshells
-		while test $_i -le 127
+		while test $_i -le 255
 		do
 			_d1=$((_i / 64)); _d2=$(( (_i / 8) % 8 )); _d3=$((_i % 8))
 			printf -v _chr "\\${_d1}${_d2}${_d3}"
@@ -31,7 +33,7 @@ _tuish_init_tables ()
 	elif test $_tuish_printf -eq 0
 	then
 		# mksh: builtin echo -ne with \0NNN octal (no external printf)
-		while test $_i -le 127
+		while test $_i -le 255
 		do
 			_d1=$((_i / 64)); _d2=$(( (_i / 8) % 8 )); _d3=$((_i % 8))
 			_chr=$(echo -ne "\\0${_d1}${_d2}${_d3}")
@@ -40,7 +42,7 @@ _tuish_init_tables ()
 		done
 	else
 		# ksh93/busybox: one subshell per char (down from two)
-		while test $_i -le 127
+		while test $_i -le 255
 		do
 			_d1=$((_i / 64)); _d2=$(( (_i / 8) % 8 )); _d3=$((_i % 8))
 			_chr=$(printf "\\${_d1}${_d2}${_d3}")
@@ -51,7 +53,63 @@ _tuish_init_tables ()
 }
 _tuish_init_tables
 
-# Fast ord: full ASCII lookup via case statement, subshell fallback for non-ASCII only.
+# ─── Fork-free high/non-printable byte lookup ────────────────────
+# _tuish_ord's literal case (below) covers fast printable ASCII (0x20-0x7E).
+# Every other byte — UTF-8 lead/continuation (0x80-0xFF) and control bytes
+# — used to fall through to a `$(printf '%d' ...)` SUBSHELL FORK, paid once
+# per non-ASCII byte (catastrophic for CJK/emoji width and UTF-8 input).
+#
+# Build a fork-free fallback once at init: a generated case keyed on the chr
+# table. The generated source contains only the literal text
+# "$_tuish_chr_NNN") — the value is substituted at match time, inside double
+# quotes, where backslash/glob metacharacters match literally. So no byte
+# ever appears raw in the eval'd source: zero escaping hazards.
+#
+# High bytes (128-255) are emitted first since they are the common path; the
+# returned value is the true UNSIGNED 1-255 (the old fork could yield a
+# negative on signed-char platforms — this is strictly more correct).
+_tuish_build_ord_hi ()
+{
+	local _i _body=''
+	_i=128
+	while test $_i -le 255
+	do
+		_body="${_body}\"\$_tuish_chr_${_i}\") _tuish_code=${_i};; "
+		_i=$((_i + 1))
+	done
+	_i=1
+	while test $_i -le 127
+	do
+		_body="${_body}\"\$_tuish_chr_${_i}\") _tuish_code=${_i};; "
+		_i=$((_i + 1))
+	done
+	eval "_tuish_ord_hi () { case \"\$1\" in ${_body}*) _tuish_code=0;; esac; }"
+}
+
+# bash/zsh have `printf -v` (a fork-free assignment) and can resolve any byte
+# in O(1): `printf '%d' "'<byte>"` yields the char's value, signed on
+# signed-char platforms, so correct back to unsigned 1-255. Shells without
+# `printf -v` (ksh93/mksh/busybox) use the generated linear-scan case, which
+# is still fork-free. Same capability probe as _tuish_init_tables.
+if printf -v _tuish_pv_probe '%d' "'x" >/dev/null 2>&1 && test "${_tuish_pv_probe:-}" = '120'
+then
+	_tuish_ord_hi ()
+	{
+		printf -v _tuish_code '%d' "'$1"
+		# Explicit `if` (not `test && assign`): the latter returns non-zero
+		# when the byte is already positive, which trips `set -euf` callers.
+		if test "$_tuish_code" -lt 0
+		then
+			_tuish_code=$((_tuish_code + 256))
+		fi
+	}
+	unset _tuish_pv_probe 2>/dev/null || _tuish_pv_probe=''
+else
+	_tuish_build_ord_hi
+fi
+
+# Fast ord: literal case for printable ASCII (no var expansion — hot input
+# path), fork-free _tuish_ord_hi for every other byte (UTF-8 + control).
 _tuish_ord ()
 {
 	case "$1" in
@@ -103,6 +161,6 @@ _tuish_ord ()
 		y) _tuish_code=121;; z) _tuish_code=122;;
 		'{') _tuish_code=123;; '|') _tuish_code=124;;
 		'}') _tuish_code=125;; '~') _tuish_code=126;;
-		*) _tuish_code=$(printf '%d' "'$1" 2>/dev/null) || _tuish_code=0;;
+		*) _tuish_ord_hi "$1";;
 	esac
 }

@@ -109,12 +109,41 @@ tuish_str_width ()
 	# Fast path: under LC_ALL=C, [:print:] is exactly 0x20-0x7E.
 	# All printable ASCII chars have width 1, so width = byte count.
 	case "$_sw_str" in *[![:print:]]*) ;; *) _tuish_swidth=$_sw_len; TUISH_SWIDTH=$_sw_len; return;; esac
-	local _sw_i=0
+	# Slow path: decode UTF-8 inline over the local value. Working on the
+	# value (not a variable name) lets us read bytes with direct
+	# ${_sw_str:i:1} substrings, avoiding the per-byte eval/indirection that
+	# _tuish_utf8_decode incurs via _tuish_byte_val. The codepoint arithmetic
+	# is kept byte-for-byte identical to _tuish_utf8_decode (str.sh decode).
+	# _tuish_ord returns unsigned 1-255 (ord.sh), so no signed correction.
+	local _sw_i=0 _sw_b0 _sw_b1 _sw_b2 _sw_cp
 	_tuish_swidth=0
-	while _tuish_utf8_decode "$1" $_sw_i
+	while test $_sw_i -lt $_sw_len
 	do
-		_sw_i=$((_sw_i + _tuish_cbytes))
-		_tuish_char_width $_tuish_code
+		_tuish_ord "${_sw_str:$_sw_i:1}"
+		_sw_b0=$_tuish_code
+		if test $_sw_b0 -lt 128
+		then
+			_sw_cp=$_sw_b0
+			_sw_i=$((_sw_i + 1))
+		elif test $_sw_b0 -lt 224
+		then
+			_tuish_ord "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_code
+			_sw_cp=$(( (_sw_b0 & 31) * 64 + (_sw_b1 & 63) ))
+			_sw_i=$((_sw_i + 2))
+		elif test $_sw_b0 -lt 240
+		then
+			_tuish_ord "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_code
+			_tuish_ord "${_sw_str:$((_sw_i + 2)):1}"; _sw_b2=$_tuish_code
+			_sw_cp=$(( (_sw_b0 & 15) * 4096 + (_sw_b1 & 63) * 64 + (_sw_b2 & 63) ))
+			_sw_i=$((_sw_i + 3))
+		else
+			_tuish_ord "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_code
+			_tuish_ord "${_sw_str:$((_sw_i + 2)):1}"; _sw_b2=$_tuish_code
+			_tuish_ord "${_sw_str:$((_sw_i + 3)):1}"
+			_sw_cp=$(( (_sw_b0 & 7) * 262144 + (_sw_b1 & 63) * 4096 + (_sw_b2 & 63) * 64 + (_tuish_code & 63) ))
+			_sw_i=$((_sw_i + 4))
+		fi
+		_tuish_char_width $_sw_cp
 		_tuish_swidth=$((_tuish_swidth + _tuish_cw))
 	done
 	TUISH_SWIDTH=$_tuish_swidth
