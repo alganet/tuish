@@ -8,6 +8,7 @@
 # Provides:
 #   tuish_viewport MODE [MAX] - set viewport mode
 #   tuish_grow                - emit line in grow mode
+#   tuish_clamp_scroll POS ORIGIN SPAN [MARGIN] - scroll-into-view origin
 #
 # Overrides:
 #   _tuish_viewport_on_resize - resize handler (event.sh stub)
@@ -32,6 +33,33 @@ _tuish_view_phys=0
 _tuish_view_grow_phase=0
 _tuish_view_grow_count=0
 _tuish_resize_cursor_row=0
+
+# ─── Scroll-into-view ─────────────────────────────────────────────
+
+# tuish_clamp_scroll POS ORIGIN SPAN [MARGIN] -> TUISH_SCROLL
+#
+# Pure integer math: given a current scroll ORIGIN and a window SPAN units wide,
+# return in TUISH_SCROLL the minimal new origin so POS lands inside the window
+# [ORIGIN, ORIGIN+SPAN). Unit-agnostic — POS/ORIGIN/SPAN must share one unit
+# (rows or display columns). MARGIN (default 0) keeps that many units of context
+# between POS and the nearer edge (scroll-off); it is clamped so the window can
+# still hold POS. The result is floored at 0. ORIGIN is returned unchanged when
+# POS is already visible.
+tuish_clamp_scroll ()
+{
+	local _pos=$1 _org=$2 _span=$3 _m=${4:-0}
+	if test $((_m * 2)) -ge "$_span"
+	then _m=$(( (_span - 1) / 2 )); fi
+	test "$_m" -lt 0 && _m=0
+	if test "$_pos" -lt $((_org + _m))
+	then TUISH_SCROLL=$((_pos - _m))
+	elif test "$_pos" -gt $((_org + _span - 1 - _m))
+	then TUISH_SCROLL=$((_pos - _span + 1 + _m))
+	else TUISH_SCROLL=$_org
+	fi
+	if test "$TUISH_SCROLL" -lt 0; then TUISH_SCROLL=0; fi
+	return 0
+}
 
 # ─── Reserve space ───────────────────────────────────────────────
 

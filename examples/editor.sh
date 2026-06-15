@@ -47,13 +47,10 @@ _clamp_col ()
 
 _ensure_visible ()
 {
-	if test $_cur_row -lt $_view_top
+	tuish_clamp_scroll $_cur_row $_view_top $_view_height
+	if test $TUISH_SCROLL -ne $_view_top
 	then
-		_view_top=$_cur_row
-		tuish_request_redraw
-	elif test $_cur_row -ge $((_view_top + _view_height))
-	then
-		_view_top=$((_cur_row - _view_height + 1))
+		_view_top=$TUISH_SCROLL
 		tuish_request_redraw
 	fi
 	# Horizontal scrolling

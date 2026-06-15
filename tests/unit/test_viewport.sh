@@ -659,6 +659,36 @@ _vp_out=''
 _tuish_viewport_on_resize
 _assert_no_row1 "$_vp_out" "fixed shrink near-top: no row 1 access"
 
+# ─── tuish_clamp_scroll (scroll-into-view) ───────────────────────
+# Window is [origin, origin+span) in any one unit (rows or columns).
+
+# Already-visible positions: origin unchanged.
+tuish_clamp_scroll 5 0 10;  assert_eq "$TUISH_SCROLL" "0"  "clamp: pos inside window -> unchanged"
+tuish_clamp_scroll 0 0 10;  assert_eq "$TUISH_SCROLL" "0"  "clamp: pos at near edge -> unchanged"
+tuish_clamp_scroll 9 0 10;  assert_eq "$TUISH_SCROLL" "0"  "clamp: pos at far edge -> unchanged"
+
+# Past the far edge: pos lands on the last visible unit.
+tuish_clamp_scroll 10 0 10; assert_eq "$TUISH_SCROLL" "1"  "clamp: pos just past window -> origin+1"
+tuish_clamp_scroll 25 0 10; assert_eq "$TUISH_SCROLL" "16" "clamp: pos far past -> pos-span+1"
+
+# Before the near edge: pos lands on the first visible unit.
+tuish_clamp_scroll 3 10 10; assert_eq "$TUISH_SCROLL" "3"  "clamp: pos before window -> pos"
+
+# Floor at 0 (cannot scroll before the start).
+tuish_clamp_scroll 0 5 10;  assert_eq "$TUISH_SCROLL" "0"  "clamp: pos near start -> floored at 0"
+
+# MARGIN keeps context between pos and the edge.
+tuish_clamp_scroll 12 0 10 2; assert_eq "$TUISH_SCROLL" "5" "clamp: margin past edge -> pos-span+1+margin"
+tuish_clamp_scroll 6 10 10 2; assert_eq "$TUISH_SCROLL" "4" "clamp: margin before edge -> pos-margin"
+tuish_clamp_scroll 5 0 10 2;  assert_eq "$TUISH_SCROLL" "0" "clamp: pos inside margin band -> unchanged"
+
+# Oversized MARGIN is clamped so the window can still hold pos.
+tuish_clamp_scroll 0 5 4 10;  assert_eq "$TUISH_SCROLL" "0" "clamp: oversized margin clamped, no crash"
+
+# SPAN of 1: only pos is visible.
+tuish_clamp_scroll 7 3 1;   assert_eq "$TUISH_SCROLL" "7"  "clamp: span 1 -> origin tracks pos"
+tuish_clamp_scroll 3 3 1;   assert_eq "$TUISH_SCROLL" "3"  "clamp: span 1, pos==origin -> unchanged"
+
 # ─── Done ────────────────────────────────────────────────────────
 
 test_summary
