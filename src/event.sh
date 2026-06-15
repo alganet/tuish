@@ -17,6 +17,7 @@
 # Internal:
 #   _tuish_parse_event     - dispatch wrapper (delegates to _tuish_resolve_event)
 #   _tuish_dump_code       - route raw byte to parse_event
+#   _tuish_kitty_decode    - decode kitty CSI-u ords into the parameter string
 
 # ─── Redraw scheduling ────────────────────────────────────────────
 
@@ -150,6 +151,33 @@ _tuish_parse_event ()
 
 # ─── Internal: byte-to-event loop ──────────────────────────────────
 
+# Decode kitty CSI-u byte codes (space-separated ords) into the parameter
+# string. Result in _tuish_ku_str.
+#
+# INVARIANT: tuish_run must contain no `for`/iteration construct that leaves a
+# control variable set in its own frame. Under zsh, a loop-control variable
+# still live in the main loop's frame when the next read-then-render fires (the
+# burst race) gets echoed to the terminal — the `_ku_c=51` screen leak. Plain
+# live locals (_esc, _sig) do NOT leak: they are equally in scope at the
+# legacy-escape and kitty dispatches yet never echoed, so the defect is the
+# loop variable specifically. This decode is therefore kept in its own
+# function: _kc dies on return, before any dispatch. tuish_run's remaining
+# loops are `while _tuish_get_byte` (no control variable — the byte is the
+# global _tuish_byte), which are safe. Keep it that way.
+_tuish_kitty_decode ()
+{
+	local _kc
+	_tuish_ku_str=''
+	for _kc in $1
+	do
+		case "$_kc" in
+			59) _tuish_ku_str="${_tuish_ku_str};";;
+			58) _tuish_ku_str="${_tuish_ku_str}:";;
+			*)  eval "_tuish_ku_str=\"\${_tuish_ku_str}\$_tuish_chr_$_kc\"";;
+		esac
+	done
+}
+
 _tuish_dump_code ()
 {
 	if test $_tuish_code -gt 31 && test $_tuish_code -lt 127
@@ -267,18 +295,8 @@ tuish_run ()
 				elif test "${_tuish_byte}" = 'u' && test "${_esc}" != "${_esc#91}"
 				then
 					# CSI u (kitty keyboard protocol)
-					local _ku_str=''
-					local _ku_codes="${_esc#91 }"
-					local _ku_c
-					for _ku_c in $_ku_codes
-					do
-						case "$_ku_c" in
-							59) _ku_str="${_ku_str};";;
-							58) _ku_str="${_ku_str}:";;
-							*)  eval "_ku_str=\"\${_ku_str}\$_tuish_chr_$_ku_c\"";;
-						esac
-					done
-					_tuish_parse_event "K ${_ku_str}"
+					_tuish_kitty_decode "${_esc#91 }"
+					_tuish_parse_event "K ${_tuish_ku_str}"
 					continue 2
 				fi
 
