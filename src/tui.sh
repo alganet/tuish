@@ -72,7 +72,7 @@ tuish_restore_cursor () { _tuish_write "${_tuish_chr_27}8"; }
 tuish_show_cursor ()    { _tuish_write '\033[?25h'; }
 tuish_hide_cursor ()    { _tuish_write '\033[?25l'; }
 tuish_cursor ()         { :; }
-tuish_reset_scroll ()   { _tuish_write '\033[;r'; }
+tuish_reset_scroll ()   { _tuish_write '\033[r'; }
 
 # ─── HID state defaults ──────────────────────────────────────────
 # These are referenced by event.sh (filtering) and tuish_fini.
@@ -292,7 +292,7 @@ _tuish_heredoc
 	_tuish_write '\033[?2004h\033[2K'   # bracketed paste, clear line
 	_tuish_write '\033[22;0;0t'          # push title
 	_tuish_write '\033[?1h'              # application cursor keys
-	_tuish_write '\033[?20l'             # LNM reset
+	_tuish_write '\033[20l'              # LNM (ANSI mode 20) reset for the TUI
 	tuish_hide_cursor
 
 	# Get terminal size and cursor position
@@ -360,10 +360,15 @@ tuish_fini ()
 	_tuish_write '\033[?1004l'   # focus events off
 	_tuish_write '\033[777l'
 	_tuish_write '\033[?2004l'   # bracketed paste off
-	_tuish_write '\033[?7h'      # DECAWM on: restore auto-wrap
 	_tuish_write '\033[?1l'      # normal cursor keys
 	_tuish_write '\033>'         # normal keypad
 	tuish_restore_cursor
+	# DECAWM must be restored AFTER DECRC (tuish_restore_cursor): the viewport
+	# teardown's DECSC saved cursor state while autowrap was off (init sets
+	# \033[?7l), and on conpty/Windows Terminal DECRC restores DECAWM to that
+	# saved-off value — reverting an earlier \033[?7h. (xterm/tmux don't, which
+	# is why this only bit some terminals.) Re-assert it here, last.
+	_tuish_write '\033[?7h'      # DECAWM on: restore auto-wrap
 	if test "${TUISH_FINI_OFFSET:-0}" -gt 0
 	then
 		_tuish_write '\033['"${TUISH_FINI_OFFSET}"'B'
@@ -373,14 +378,19 @@ tuish_fini ()
 	then
 		_tuish_write '\033['"$_tuish_fini_push_gap"'A'
 	fi
-	_tuish_write '\033[?20h'     # LNM set
+	_tuish_write '\033[20h'      # LNM (ANSI mode 20) set: restore newline mode
 	_tuish_write '\033[23;0;0t'  # pop title
 	_tuish_write '\033[0 q'   # DECSCUSR: restore default cursor shape
 	tuish_show_cursor
 
-	# Restore stty
-	stty "${_tuish_previous_stty:-}" 2>/dev/null || :
-	stty sane echo icanon 2>/dev/null || :
+	# Restore stty: prefer the exact saved state so a faithful snapshot
+	# (e.g. IUTF8, and any terminal-specific flags) is preserved. Fall back
+	# to sane only if we never captured one (init aborted) or the restore
+	# fails — otherwise `stty sane` clobbers the just-restored original.
+	if test -n "${_tuish_previous_stty:-}" && stty "$_tuish_previous_stty" 2>/dev/null
+	then :
+	else stty sane echo icanon 2>/dev/null || :
+	fi
 
 	# Drain stdin
 	while read -r -t'0.1' 2>/dev/null
