@@ -102,6 +102,8 @@ _tuish_previous_stty=''
 _tuish_stty=''
 _tuish_esc_timeout=''
 _tuish_idle_timeout=''
+_tuish_idle_chunk='-t0.03'
+_tuish_idle_chunks=1
 _tuish_pending_byte=''
 _tuish_initialized=0
 
@@ -160,15 +162,19 @@ tuish_init ()
 		{
 			IFS= read -r -k1 -u0 ${@:-} _tuish_byte 2>/dev/null || return 1
 		}
-		# zsh defers signals during builtins; force delivery
-		# via subshell fork after polling.
+		# Poll for input up to TUISH_IDLE_TIMEOUT, in <=30ms chunks: zsh defers
+		# signals (traps) inside the read builtin, so each chunk boundary is a
+		# delivery point and the trailing subshell fork forces any pending trap
+		# to run. The chunk COUNT is derived from TUISH_IDLE_TIMEOUT in init
+		# (_tuish_idle_chunks/_tuish_idle_chunk), so the idle interval honors the
+		# configured timeout instead of a fixed 270ms.
 		_tuish_idle_wait ()
 		{
-			local _i=0
-			while test $_i -lt 9
+			local _i=$_tuish_idle_chunks
+			while test $_i -gt 0
 			do
-				IFS= read -r -k1 -u0 -t0.03 _tuish_byte 2>/dev/null && return 0
-				_i=$((_i + 1))
+				IFS= read -r -k1 -u0 $_tuish_idle_chunk _tuish_byte 2>/dev/null && return 0
+				_i=$((_i - 1))
 			done
 			eval "$(:)" 2>/dev/null
 			test -n "${_tuish_signal:-}" && return 1
@@ -237,6 +243,28 @@ _tuish_heredoc
 	then
 		_tuish_esc_timeout='-t1'
 		_tuish_idle_timeout="-t${TUISH_IDLE_TIMEOUT:-1}"
+	fi
+
+	# Chunked idle wait (zsh): poll in slices of at most 30ms up to the full
+	# idle timeout, so the idle interval tracks TUISH_IDLE_TIMEOUT. One read of
+	# the whole timeout when it's already <=30ms; otherwise ceil(timeout/30ms)
+	# slices of 30ms (default 0.26s -> 9 slices, the historical interval).
+	_tuish_idle_chunk="$_tuish_idle_timeout"
+	_tuish_idle_chunks=1
+	if test "$TUISH_TIMING" != 'second'
+	then
+		_it="${TUISH_IDLE_TIMEOUT:-0.26}"
+		case "$_it" in
+			*.*) _itw="${_it%.*}" _itf="${_it#*.}000"
+			     _itf="${_itf%"${_itf#???}"}"
+			     _itms=$(( ${_itw:-0} * 1000 + 10#$_itf ));;
+			*)   _itms=$(( _it * 1000 ));;
+		esac
+		if test "$_itms" -gt 30
+		then
+			_tuish_idle_chunk='-t0.03'
+			_tuish_idle_chunks=$(( (_itms + 29) / 30 ))
+		fi
 	fi
 
 	_tuish_code=''
