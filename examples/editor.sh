@@ -23,9 +23,10 @@ _tuish_src_dir="${_dir}/../src"
 # ─── Editor state ───────────────────────────────────────────────────
 
 _cur_row=1
-_cur_col=1
+_cur_col=1       # cursor character index (1-based)
+_cur_dcol=0      # cursor display column (0-based; width of the prefix before it)
 _view_top=1
-_view_left=0     # horizontal scroll offset (0-based)
+_view_left=0     # horizontal scroll offset in DISPLAY COLUMNS (0-based)
 _view_height=0
 _view_width=0
 _sel_row=0       # 0 = no selection
@@ -45,6 +46,47 @@ _clamp_col ()
 	test $_cur_col -lt 1 && _cur_col=1
 }
 
+# Display column (0-based) of the cursor: width of the line prefix before it.
+_compute_dcol ()
+{
+	tuish_buf_get $_cur_row
+	local _dc="$TUISH_BLINE"
+	tuish_str_left _dc $((_cur_col - 1))
+	local _dcp="$TUISH_SLEFT"
+	tuish_str_width _dcp
+	_cur_dcol=$TUISH_SWIDTH
+}
+
+# Map a display column (0-based) to a 1-based character index on the cursor's
+# line (mouse positioning). Sets _cur_col to the char at or after the column.
+_col_to_char ()
+{
+	local _target=$1
+	test $_target -lt 0 && _target=0
+	tuish_buf_get $_cur_row
+	local _ctc="$TUISH_BLINE"
+	tuish_str_len _ctc
+	local _ctc_len=$TUISH_SLEN _ctc_i=0 _ctc_col=0 _ctc_ch
+	while test $_ctc_i -lt $_ctc_len
+	do
+		test $_ctc_col -ge $_target && break
+		tuish_str_char _ctc $_ctc_i
+		_ctc_ch="$TUISH_SCHAR"
+		tuish_str_width _ctc_ch
+		_ctc_col=$((_ctc_col + TUISH_SWIDTH))
+		_ctc_i=$((_ctc_i + 1))
+	done
+	_cur_col=$((_ctc_i + 1))
+}
+
+# Place the cursor, mapping its character index to a display column and
+# subtracting the horizontal (column) scroll offset.
+_place_cursor ()
+{
+	_compute_dcol
+	tuish_cursor $((_cur_row - _view_top + 1)) $((_cur_dcol - _view_left + 1))
+}
+
 _ensure_visible ()
 {
 	tuish_clamp_scroll $_cur_row $_view_top $_view_height
@@ -53,15 +95,12 @@ _ensure_visible ()
 		_view_top=$TUISH_SCROLL
 		tuish_request_redraw
 	fi
-	# Horizontal scrolling
-	if test $_cur_col -le $_view_left
+	# Horizontal scrolling (in display columns)
+	_compute_dcol
+	tuish_clamp_scroll $_cur_dcol $_view_left $_view_width
+	if test $TUISH_SCROLL -ne $_view_left
 	then
-		_view_left=$((_cur_col - 1))
-		test $_view_left -lt 0 && _view_left=0
-		tuish_request_redraw
-	elif test $_cur_col -gt $((_view_left + _view_width))
-	then
-		_view_left=$((_cur_col - _view_width))
+		_view_left=$TUISH_SCROLL
 		tuish_request_redraw
 	fi
 }
@@ -385,7 +424,7 @@ _ed_click ()
 {
 	_clear_sel
 	_cur_row=$((_view_top + TUISH_MOUSE_Y - 1))
-	_cur_col=$((_view_left + TUISH_MOUSE_X))
+	_col_to_char $((_view_left + TUISH_MOUSE_X - 1))
 	test $_cur_row -lt 1 && _cur_row=1
 	test $_cur_row -gt $TUISH_BUF_COUNT && _cur_row=$TUISH_BUF_COUNT
 	_clamp_col
@@ -399,7 +438,7 @@ _ed_drag ()
 		_sel_col=$_cur_col
 	fi
 	_cur_row=$((_view_top + TUISH_MOUSE_Y - 1))
-	_cur_col=$((_view_left + TUISH_MOUSE_X))
+	_col_to_char $((_view_left + TUISH_MOUSE_X - 1))
 	test $_cur_row -lt 1 && _cur_row=1
 	test $_cur_row -gt $TUISH_BUF_COUNT && _cur_row=$TUISH_BUF_COUNT
 	_clamp_col
@@ -632,7 +671,8 @@ _ed_show_unbound () { :; }
 _ed_render_line_now ()
 {
 	_render_line $_cur_row
-	tuish_vmove $((_cur_row - _view_top + 1)) $((_cur_col - _view_left))
+	_compute_dcol
+	tuish_vmove $((_cur_row - _view_top + 1)) $((_cur_dcol - _view_left + 1))
 	tuish_flush
 }
 
@@ -641,22 +681,8 @@ _ed_render_line_now ()
 _render_clipped_line ()
 {
 	local _line="$1"
-	tuish_str_len _line
-	local _len=$_tuish_slen
-	if test $_view_left -ge $_len
-	then
-		return
-	fi
-	tuish_str_right _line $_view_left
-	local _visible="$_tuish_sright"
-	tuish_str_len _visible
-	if test $_tuish_slen -gt $_view_width
-	then
-		tuish_str_left _visible $_view_width
-		tuish_print "$_tuish_sleft"
-	else
-		tuish_print "$_visible"
-	fi
+	tuish_str_window _line $_view_left $_view_width
+	tuish_print "$TUISH_SWINDOW"
 }
 
 _render ()
@@ -697,8 +723,8 @@ _render ()
 	# Status bar
 	_render_status
 
-	# Place cursor (adjusted for horizontal scroll)
-	tuish_cursor $((_cur_row - _view_top + 1)) $((_cur_col - _view_left))
+	# Place cursor (adjusted for horizontal column scroll)
+	_place_cursor
 }
 
 _render_sel_line ()
@@ -713,7 +739,12 @@ _render_sel_line ()
 	test $_lnum -eq $_sr1 && _s=$_sc1
 	test $_lnum -eq $_sr2 && _e=$_sc2
 
-	# Visible window in character coordinates (1-based)
+	# Visible window in character coordinates (1-based).
+	# TODO (Step D): _view_left is now a DISPLAY-COLUMN offset, but this still
+	# treats it as a character index and char-slices ${_line:off:len}. Correct
+	# for ASCII (col == char == byte); misaligns selection highlight on lines
+	# with wide/combining chars. Migrate to tuish_str_window when selection
+	# rendering goes column-aware.
 	local _vl=$((_view_left + 1))
 	local _vr=$((_view_left + _view_width))
 
@@ -914,10 +945,10 @@ tuish_on_redraw ()
 	then
 		_render_line $_cur_row
 		_render_status
-		tuish_cursor $((_cur_row - _view_top + 1)) $((_cur_col - _view_left))
+		_place_cursor
 	else
 		_render_status
-		tuish_cursor $((_cur_row - _view_top + 1)) $((_cur_col - _view_left))
+		_place_cursor
 	fi
 }
 

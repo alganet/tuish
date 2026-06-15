@@ -157,4 +157,34 @@ assert_eq "$_tuish_slen" "1" "fast path: tilde len"
 tuish_str_char _t 0
 assert_eq "$_tuish_schar" "~" "fast path: tilde char"
 
+# --- tuish_str_window (horizontal column-window) ---
+# ASCII (fast path): column offset == byte offset.
+_t='abcdefgh'
+tuish_str_window _t 0 4;  assert_eq "$TUISH_SWINDOW" "abcd"     "window: ascii from start"
+tuish_str_window _t 2 4;  assert_eq "$TUISH_SWINDOW" "cdef"     "window: ascii offset"
+tuish_str_window _t 4 10; assert_eq "$TUISH_SWINDOW" "efgh"     "window: width past end -> tail"
+tuish_str_window _t 8 4;  assert_eq "$TUISH_SWINDOW" ""         "window: offset == width -> empty"
+tuish_str_window _t 10 4; assert_eq "$TUISH_SWINDOW" ""         "window: offset past end -> empty"
+tuish_str_window _t 0 0;  assert_eq "$TUISH_SWINDOW" ""         "window: zero width -> empty"
+tuish_str_window _t 0 8;  assert_eq "$TUISH_SWINDOW" "abcdefgh" "window: whole string"
+# legacy alias is set too
+tuish_str_window _t 1 3;  assert_eq "$_tuish_swindow" "bcd"     "window: legacy alias _tuish_swindow"
+
+_t=''
+tuish_str_window _t 0 5;  assert_eq "$TUISH_SWINDOW" ""         "window: empty string"
+
+# Wide chars: 'a中b中c' -> columns a=0, 中=1-2, b=3, 中=4-5, c=6 (total width 7).
+_t='a中b中c'
+tuish_str_window _t 0 3;  assert_eq "$TUISH_SWINDOW" "a中"      "window: wide fully inside"
+tuish_str_window _t 1 2;  assert_eq "$TUISH_SWINDOW" "中"       "window: wide aligned to edges"
+tuish_str_window _t 0 2;  assert_eq "$TUISH_SWINDOW" "a"        "window: right-straddle wide dropped (result narrower)"
+tuish_str_window _t 2 3;  assert_eq "$TUISH_SWINDOW" " b"       "window: left-straddle wide -> leading space"
+tuish_str_window _t 3 2;  assert_eq "$TUISH_SWINDOW" "b"        "window: trailing wide right-straddle dropped"
+
+# Combining mark (zero width) follows its visible base, dropped when base off-screen.
+# 'a' + U+20DB combining, then 'bc' -> a=col0 (+mark), b=col1, c=col2.
+_t='a⃛bc'
+tuish_str_window _t 0 2;  assert_eq "$TUISH_SWINDOW" "a⃛b"      "window: combining mark kept with visible base"
+tuish_str_window _t 1 2;  assert_eq "$TUISH_SWINDOW" "bc"       "window: combining mark dropped when base scrolled off"
+
 test_summary

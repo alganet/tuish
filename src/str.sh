@@ -8,9 +8,10 @@
 # Provides:
 #   tuish_str_len/left/right/char - character-level string ops (byte-mode UTF-8)
 #   tuish_str_width              - display width (columns)
+#   tuish_str_window             - visible slice of a horizontal column-window
 #   tuish_str_repeat             - O(log n) string repetition
 #   _tuish_char_width()          - codepoint → display width
-#   _tuish_byte_val/utf8_len/utf8_decode/char_byte_off - UTF-8 internals
+#   _tuish_byte_val/utf8_len/char_byte_off - UTF-8 internals
 #
 # Dependencies: _tuish_ord() (from src/ord.sh)
 #
@@ -111,10 +112,10 @@ tuish_str_width ()
 	case "$_sw_str" in *[![:print:]]*) ;; *) _tuish_swidth=$_sw_len; TUISH_SWIDTH=$_sw_len; return;; esac
 	# Slow path: decode UTF-8 inline over the local value. Working on the
 	# value (not a variable name) lets us read bytes with direct
-	# ${_sw_str:i:1} substrings, avoiding the per-byte eval/indirection that
-	# _tuish_utf8_decode incurs via _tuish_byte_val. The codepoint arithmetic
-	# is kept byte-for-byte identical to _tuish_utf8_decode (str.sh decode).
-	# _tuish_ord returns unsigned 1-255 (ord.sh), so no signed correction.
+	# ${_sw_str:i:1} substrings, avoiding per-byte eval/indirection — the
+	# reason the decode is inlined here (and in tuish_str_window) rather than
+	# factored into a shared helper, which would need a per-char eval or string
+	# copy. _tuish_ord returns unsigned 1-255 (ord.sh), so no signed correction.
 	local _sw_i=0 _sw_b0 _sw_b1 _sw_b2 _sw_cp
 	_tuish_swidth=0
 	while test $_sw_i -lt $_sw_len
@@ -158,6 +159,76 @@ tuish_str_width ()
 		_tuish_swidth=$((_tuish_swidth + _tuish_cw))
 	done
 	TUISH_SWIDTH=$_tuish_swidth
+}
+
+# ─── Horizontal window (display columns) ─────────────────────────
+# tuish_str_window VAR OFFSET WIDTH -> TUISH_SWINDOW (legacy: _tuish_swindow)
+#
+# The slice of VAR visible in a horizontal window OFFSET columns from the left,
+# WIDTH columns wide — i.e. the characters occupying display columns
+# [OFFSET, OFFSET+WIDTH). Width-aware: a wide (2-col) char whose left half is
+# scrolled off the left edge renders as a single space for its visible right
+# half; a wide char that would cross the right edge is dropped (the result is
+# then < WIDTH columns — the caller pads, e.g. tuish_clear_to_eol). Zero-width
+# combining marks follow their visible base. Returns content only (no padding).
+tuish_str_window ()
+{
+	eval "local _wn_str=\"\${$1}\""
+	local _wn_off=$2 _wn_w=$3
+	local _wn_end=$((_wn_off + _wn_w))
+	local _wn_len=${#_wn_str}
+	# Fast path: all printable ASCII → every char is width 1, so display column
+	# == byte offset and the window is a plain substring.
+	case "$_wn_str" in *[![:print:]]*) ;; *)
+		_tuish_swindow=''
+		test "$_wn_off" -lt "$_wn_len" && _tuish_swindow="${_wn_str:$_wn_off:$_wn_w}"
+		TUISH_SWINDOW=$_tuish_swindow
+		return;;
+	esac
+	# Slow path: decode UTF-8 (mirrors tuish_str_width), tracking the running
+	# display column _wn_col (the start column of the current char).
+	local _wn_i=0 _wn_col=0 _wn_b0 _wn_b1 _wn_b2 _wn_cp _wn_n _wn_ch
+	_tuish_swindow=''
+	while test $_wn_i -lt $_wn_len
+	do
+		_tuish_ord "${_wn_str:$_wn_i:1}"; _wn_b0=$_tuish_code
+		if test $_wn_b0 -lt 128
+		then _wn_n=1; _wn_cp=$_wn_b0
+		elif test $_wn_b0 -lt 224 && test $((_wn_i + 1)) -lt $_wn_len
+		then _tuish_ord "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_code
+		     _wn_n=2; _wn_cp=$(( (_wn_b0 & 31) * 64 + (_wn_b1 & 63) ))
+		elif test $_wn_b0 -lt 240 && test $((_wn_i + 2)) -lt $_wn_len
+		then _tuish_ord "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_code
+		     _tuish_ord "${_wn_str:$((_wn_i + 2)):1}"; _wn_b2=$_tuish_code
+		     _wn_n=3; _wn_cp=$(( (_wn_b0 & 15) * 4096 + (_wn_b1 & 63) * 64 + (_wn_b2 & 63) ))
+		elif test $_wn_b0 -lt 248 && test $((_wn_i + 3)) -lt $_wn_len
+		then _tuish_ord "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_code
+		     _tuish_ord "${_wn_str:$((_wn_i + 2)):1}"; _wn_b2=$_tuish_code
+		     _tuish_ord "${_wn_str:$((_wn_i + 3)):1}"
+		     _wn_n=4; _wn_cp=$(( (_wn_b0 & 7) * 262144 + (_wn_b1 & 63) * 4096 + (_wn_b2 & 63) * 64 + (_tuish_code & 63) ))
+		else _wn_n=1; _wn_cp=$_wn_b0
+		fi
+		_tuish_char_width $_wn_cp
+		_wn_ch="${_wn_str:$_wn_i:$_wn_n}"
+		if test "$_tuish_cw" -eq 0
+		then
+			# combining mark: keep it iff attached to a visible base
+			if test $_wn_col -gt $_wn_off && test $_wn_col -le $_wn_end
+			then _tuish_swindow="${_tuish_swindow}${_wn_ch}"; fi
+		elif test $((_wn_col + _tuish_cw)) -le $_wn_off
+		then :                                   # entirely left of the window
+		elif test $_wn_col -ge $_wn_end
+		then break                               # entirely right (and all after)
+		elif test $_wn_col -lt $_wn_off
+		then _tuish_swindow="${_tuish_swindow} "  # left straddle: visible right half
+		elif test $((_wn_col + _tuish_cw)) -gt $_wn_end
+		then break                               # right straddle: does not fit, drop
+		else _tuish_swindow="${_tuish_swindow}${_wn_ch}"   # fully inside
+		fi
+		_wn_col=$((_wn_col + _tuish_cw))
+		_wn_i=$((_wn_i + _wn_n))
+	done
+	TUISH_SWINDOW=$_tuish_swindow
 }
 
 # ─── Codepoint width classification ──────────────────────────────
@@ -435,40 +506,6 @@ _tuish_utf8_len ()
 	elif test $1 -lt 224; then _tuish_cbytes=2
 	elif test $1 -lt 240; then _tuish_cbytes=3
 	else                       _tuish_cbytes=4
-	fi
-}
-
-# Decode UTF-8 codepoint at byte offset $2 in variable named $1.
-# Sets _tuish_code (codepoint) and _tuish_cbytes (byte length).
-# Returns 1 at end of string.
-_tuish_utf8_decode ()
-{
-	_tuish_byte_val "$1" "$2" || return 1
-	local _ud_b0=$_tuish_bval
-	if test $_ud_b0 -lt 128
-	then
-		_tuish_code=$_ud_b0
-		_tuish_cbytes=1
-	elif test $_ud_b0 -lt 224
-	then
-		_tuish_byte_val "$1" "$(($2 + 1))"
-		_tuish_code=$(( (_ud_b0 & 31) * 64 + (_tuish_bval & 63) ))
-		_tuish_cbytes=2
-	elif test $_ud_b0 -lt 240
-	then
-		_tuish_byte_val "$1" "$(($2 + 1))"
-		local _ud_b1=$_tuish_bval
-		_tuish_byte_val "$1" "$(($2 + 2))"
-		_tuish_code=$(( (_ud_b0 & 15) * 4096 + (_ud_b1 & 63) * 64 + (_tuish_bval & 63) ))
-		_tuish_cbytes=3
-	else
-		_tuish_byte_val "$1" "$(($2 + 1))"
-		local _ud_b1=$_tuish_bval
-		_tuish_byte_val "$1" "$(($2 + 2))"
-		local _ud_b2=$_tuish_bval
-		_tuish_byte_val "$1" "$(($2 + 3))"
-		_tuish_code=$(( (_ud_b0 & 7) * 262144 + (_ud_b1 & 63) * 4096 + (_ud_b2 & 63) * 64 + (_tuish_bval & 63) ))
-		_tuish_cbytes=4
 	fi
 }
 
