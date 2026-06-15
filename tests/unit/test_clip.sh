@@ -91,4 +91,22 @@ case "$_cap" in
 esac
 assert_eq "$_ok" "yes" "on-screen box: still ends with SGR reset"
 
+# ─── tuish_clip_reset: public reset of the clip guard ──────────────
+# A clipped (off-bottom) vmove sets the guard, suppressing the block's writes;
+# tuish_clip_reset clears it so subsequent writes resume — the multi-emit
+# analog of tuish_print_at's trailing reset. (set -e is armed here, so the
+# clipped vmove is guarded with `|| :`.)
+tuish_begin
+tuish_vmove 999 1 || :
+assert_eq "$_tuish_clipped" "1" "clip_reset: off-bottom vmove sets the guard"
+tuish_print 'X'
+case "$_tuish_buf" in *X*) _leak=yes;; *) _leak=no;; esac
+assert_eq "$_leak" "no" "clip_reset: writes suppressed while clipped"
+tuish_clip_reset
+assert_eq "$_tuish_clipped" "0" "clip_reset: clears the guard"
+tuish_print 'Y'
+case "$_tuish_buf" in *Y*) _resumed=yes;; *) _resumed=no;; esac
+assert_eq "$_resumed" "yes" "clip_reset: writes resume after reset"
+_tuish_buf=''; _tuish_buffering=0
+
 test_summary
