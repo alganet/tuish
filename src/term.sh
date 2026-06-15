@@ -10,6 +10,7 @@
 #   Clearing:   tuish_clear_line, tuish_clear_to_eol, tuish_clear_to_bol,
 #               tuish_clear_screen, tuish_clear_region
 #   Cursor:     tuish_cursor_shape
+#   Clipping:   tuish_clip_reset
 #   Scrolling:  tuish_scroll_region, tuish_scroll_up/down, tuish_scroll_up_n/down_n
 #   Screen:     tuish_altscreen_on/off, tuish_newline
 #   Attributes: tuish_sgr, tuish_sgr_reset, tuish_style,
@@ -44,6 +45,12 @@ tuish_print ()
 	_tuish_write "$_p"
 }
 tuish_print_at ()       { if tuish_vmove "$1" "$2"; then tuish_print "$3"; fi; _tuish_clipped=0; }
+# Re-enable output after a hand-rolled `tuish_vmove`-guarded block. A clipped
+# (off-screen) `tuish_vmove` leaves the guard set so the block's writes are
+# suppressed; call this once the block ends to clear it, exactly as
+# `tuish_print_at` does for the single-text case. Apps must use this rather
+# than touching the private clip flag directly.
+tuish_clip_reset ()     { _tuish_clipped=0; }
 tuish_clear_line ()     { _tuish_write '\033[2K'; }
 tuish_clear_to_eol ()   { _tuish_write '\033[K'; }
 tuish_clear_screen ()   { _tuish_write '\033[2J'; }
