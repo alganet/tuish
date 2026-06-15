@@ -121,27 +121,38 @@ tuish_str_width ()
 	do
 		_tuish_ord "${_sw_str:$_sw_i:1}"
 		_sw_b0=$_tuish_code
+		# The continuation-byte count a lead implies is only read when those
+		# bytes are actually present (the `&& test i+n -lt _sw_len` guards).
+		# A lead whose continuations run past the end — a string sliced mid
+		# sequence — falls through to the final branch and is counted as one
+		# width-1 cell, so the scan can never read past _sw_len.
 		if test $_sw_b0 -lt 128
 		then
 			_sw_cp=$_sw_b0
 			_sw_i=$((_sw_i + 1))
-		elif test $_sw_b0 -lt 224
+		elif test $_sw_b0 -lt 224 && test $((_sw_i + 1)) -lt $_sw_len
 		then
 			_tuish_ord "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_code
 			_sw_cp=$(( (_sw_b0 & 31) * 64 + (_sw_b1 & 63) ))
 			_sw_i=$((_sw_i + 2))
-		elif test $_sw_b0 -lt 240
+		elif test $_sw_b0 -lt 240 && test $((_sw_i + 2)) -lt $_sw_len
 		then
 			_tuish_ord "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_code
 			_tuish_ord "${_sw_str:$((_sw_i + 2)):1}"; _sw_b2=$_tuish_code
 			_sw_cp=$(( (_sw_b0 & 15) * 4096 + (_sw_b1 & 63) * 64 + (_sw_b2 & 63) ))
 			_sw_i=$((_sw_i + 3))
-		else
+		elif test $_sw_b0 -lt 248 && test $((_sw_i + 3)) -lt $_sw_len
+		then
 			_tuish_ord "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_code
 			_tuish_ord "${_sw_str:$((_sw_i + 2)):1}"; _sw_b2=$_tuish_code
 			_tuish_ord "${_sw_str:$((_sw_i + 3)):1}"
 			_sw_cp=$(( (_sw_b0 & 7) * 262144 + (_sw_b1 & 63) * 4096 + (_sw_b2 & 63) * 64 + (_tuish_code & 63) ))
 			_sw_i=$((_sw_i + 4))
+		else
+			# Stray continuation byte, invalid lead (0xF8-0xFF), or a lead
+			# whose continuations are truncated: count one cell, advance one.
+			_sw_cp=$_sw_b0
+			_sw_i=$((_sw_i + 1))
 		fi
 		_tuish_char_width $_sw_cp
 		_tuish_swidth=$((_tuish_swidth + _tuish_cw))
