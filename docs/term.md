@@ -113,48 +113,30 @@ tuish_style fg=255:128:0           # truecolor orange foreground
 
 ## Colors
 
-### Basic Colors (0-7)
+`tuish_fg VALUE` and `tuish_bg VALUE` set the foreground/background through one
+smart entry point each. VALUE accepts every color form:
 
-| Function            | Description                       |
-|---------------------|-----------------------------------|
-| `tuish_fg N`        | Set foreground color (0-7)        |
-| `tuish_bg N`        | Set background color (0-7)        |
-| `tuish_fg_bright N` | Set bright foreground color (0-7) |
-| `tuish_bg_bright N` | Set bright background color (0-7) |
+| VALUE      | Meaning                                                      |
+|------------|--------------------------------------------------------------|
+| `0`-`7`    | Basic color (black red green yellow blue magenta cyan white) |
+| `8`-`15`   | Bright color (bright black … bright white)                   |
+| `16`-`255` | 256-color palette (16-231 = 6×6×6 cube, 232-255 = grayscale) |
+| `R:G:B`    | Truecolor, each component 0-255 (e.g. `255:128:0`)           |
+| `default`  | Reset just this role to the terminal default                 |
 
-| N | Color   |
-|---|---------|
-| 0 | Black   |
-| 1 | Red     |
-| 2 | Green   |
-| 3 | Yellow  |
-| 4 | Blue    |
-| 5 | Magenta |
-| 6 | Cyan    |
-| 7 | White   |
+| N | Basic color |
+|---|-------------|
+| 0 | Black       |
+| 1 | Red         |
+| 2 | Green       |
+| 3 | Yellow      |
+| 4 | Blue        |
+| 5 | Magenta     |
+| 6 | Cyan        |
+| 7 | White       |
 
-### 256-Color Palette
-
-| Function        | Description            |
-|-----------------|------------------------|
-| `tuish_fg256 N` | Set foreground (0-255) |
-| `tuish_bg256 N` | Set background (0-255) |
-
-| Range   | Description                     |
-|---------|---------------------------------|
-| 0-7     | Standard colors (same as basic) |
-| 8-15    | Bright colors                   |
-| 16-231  | 6x6x6 color cube                |
-| 232-255 | Grayscale ramp (dark to light)  |
-
-### Truecolor (24-bit RGB)
-
-| Function             | Description                               |
-|----------------------|-------------------------------------------|
-| `tuish_fg_rgb R G B` | Set foreground to RGB values (0-255 each) |
-| `tuish_bg_rgb R G B` | Set background to RGB values (0-255 each) |
-| `tuish_fg_default`   | Reset foreground to terminal default      |
-| `tuish_bg_default`   | Reset background to terminal default      |
+`tuish_style` (below) takes the same forms via `fg=`/`bg=` and folds colors and
+attributes into a single SGR sequence.
 
 ### Composing Styles
 
@@ -167,7 +149,7 @@ tuish_print "bold red text"
 tuish_sgr_reset
 
 tuish_dim
-tuish_fg256 242
+tuish_fg 242
 tuish_print "dim gray"
 tuish_sgr_reset
 

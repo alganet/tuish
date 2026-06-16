@@ -58,11 +58,11 @@ passed through `eval` — only the bound action strings are evaluated.
 
 ## Internals
 
-Bindings are stored as shell variables with sanitized event names:
+Bindings are stored as shell variables named `_tuish_kb_<sanitized>`. The event
+name is sanitized injectively: alphanumerics pass through, and every other byte
+(including a literal `_`) becomes `_<decimal-ord>_`, so two distinct events can
+never collide on one variable name. For example `ctrl-w` → `ctrl_45_w`, `char a`
+→ `char_32_a`, and the `*` catch-all → `_42_`.
 
-| Character | Replacement |
-|-----------|-------------|
-| `-`       | `_D`        |
-| `.`       | `_P`        |
-| `*`       | `_S`        |
-| space     | `_W`        |
+A `*` binding is the catch-all: it fires for any event with no exact (or
+`prefix *` glob) match.
