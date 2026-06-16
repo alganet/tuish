@@ -132,6 +132,62 @@ tuish_wrap_off ()
 # C (character), and K (CSI u / kitty protocol) event classes into
 # human-readable TUISH_EVENT names.
 
+# Mouse (SGR 1006): decode the button byte arithmetically instead of
+# enumerating every button x modifier combination. Bits 2/3/4 are shift/alt/
+# ctrl; clearing them leaves the base action (0-2 click, 3 release, 32-34 hold,
+# 35 move, 64/65 wheel). Some terminals send 96/97/98 for a ctrl-click, so those
+# are normalized first. _tuish_held carries the unprefixed drop name from a
+# press/hold to its matching release.
+_tuish_resolve_mouse ()   # $1=class(M|m) $2=button $3=x $4=y
+{
+	TUISH_EVENT_KIND='mouse'
+	local _b=${2:-0} _pfx='' _base _btn _mouse=''
+	case $_b in 96) _b=16;; 97) _b=17;; 98) _b=18;; esac
+	test $((_b & 16)) -ne 0 && _pfx='ctrl-'
+	test $((_b & 8)) -ne 0 && _pfx="${_pfx}alt-"
+	test $((_b & 4)) -ne 0 && _pfx="${_pfx}shift-"
+	_base=$((_b & ~28))
+
+	if test "$1" = 'm'
+	then
+		# SGR release: a drop for button 0/1/2, else absorbed. A quick click with
+		# no drag is absorbed unless detailed reporting is on.
+		if test -z "$_tuish_held" && test $_tuish_detailed -eq 0
+		then return; fi
+		_tuish_held=''
+		case $_base in
+			0) _mouse="${_pfx}ldrop";;
+			1) _mouse="${_pfx}mdrop";;
+			2) _mouse="${_pfx}rdrop";;
+			*) return;;
+		esac
+	else
+		case $_base in
+			0|1|2)
+				case $_base in 0) _btn=l;; 1) _btn=m;; 2) _btn=r;; esac
+				if test -n "$_tuish_held"
+				then _mouse="${_pfx}drop"; _tuish_held=''
+				else _mouse="${_pfx}${_btn}clik"
+				fi;;
+			3)  test -n "$_tuish_held" && _mouse="$_tuish_held" && _tuish_held='';;
+			32|33|34)
+				case $_base in 32) _btn=l;; 33) _btn=m;; 34) _btn=r;; esac
+				_mouse="${_pfx}${_btn}hold"; _tuish_held="${_btn}drop";;
+			35) _mouse="${_pfx}move"; _tuish_held='';;
+			64) _mouse="${_pfx}whup";;
+			65) _mouse="${_pfx}wdown";;
+			*)  _mouse="${2:-}"; _tuish_held='';;
+		esac
+	fi
+
+	TUISH_MOUSE_X=$3
+	TUISH_MOUSE_Y=$4
+	TUISH_MOUSE_ABS_Y=$4
+	if test -n "$_tuish_view_mode"
+	then TUISH_MOUSE_Y=$(($4 - TUISH_VIEW_TOP + 1)); fi
+	TUISH_EVENT="$_mouse"
+}
+
 _tuish_resolve_event ()
 {
 	local _class=$1
@@ -153,100 +209,7 @@ _tuish_resolve_event ()
 
 	if test "${_class}" = 'M' || test "${_class}" = 'm'
 	then
-		TUISH_EVENT_KIND='mouse'
-		local _mouse=''
-
-		if test "${_class}" = 'm'
-		then
-			# SGR release: fire drop event if dragging, else absorb
-			if test -z "$_tuish_held" && test $_tuish_detailed -eq 0
-			then
-				return
-			fi
-			local _prefix=''
-			case ${2:-} in
-				0     ) _mouse='ldrop';;
-				1     ) _mouse='mdrop';;
-				2     ) _mouse='rdrop';;
-				4     ) _mouse='ldrop' _prefix='shift-';;
-				5     ) _mouse='mdrop' _prefix='shift-';;
-				6     ) _mouse='rdrop' _prefix='shift-';;
-				8     ) _mouse='ldrop' _prefix='alt-';;
-				9     ) _mouse='mdrop' _prefix='alt-';;
-				10    ) _mouse='rdrop' _prefix='alt-';;
-				16|96 ) _mouse='ldrop' _prefix='ctrl-';;
-				17|97 ) _mouse='mdrop' _prefix='ctrl-';;
-				18|98 ) _mouse='rdrop' _prefix='ctrl-';;
-				24    ) _mouse='ldrop' _prefix='ctrl-alt-';;
-				25    ) _mouse='mdrop' _prefix='ctrl-alt-';;
-				26    ) _mouse='rdrop' _prefix='ctrl-alt-';;
-				*     ) _mouse='' _prefix='';;
-			esac
-			_tuish_held=''
-			if test -z "$_mouse"
-			then
-				return
-			fi
-			_mouse="${_prefix}${_mouse}"
-		else
-		case ${2:-} in
-			0  ) { test -n "$_tuish_held" && _mouse="drop" && _tuish_held='' ;} || _mouse='lclik';;
-			1  ) { test -n "$_tuish_held" && _mouse="drop" && _tuish_held='' ;} || _mouse='mclik';;
-			2  ) { test -n "$_tuish_held" && _mouse="drop" && _tuish_held='' ;} || _mouse='rclik';;
-			3  ) test -n "$_tuish_held" && _mouse="${_tuish_held}" && _tuish_held='';;
-			4  ) { test -n "$_tuish_held" && _mouse="shift-drop" && _tuish_held='' ;} || _mouse='shift-lclik';;
-			5  ) { test -n "$_tuish_held" && _mouse="shift-drop" && _tuish_held='' ;} || _mouse='shift-mclik';;
-			6  ) { test -n "$_tuish_held" && _mouse="shift-drop" && _tuish_held='' ;} || _mouse='shift-rclik';;
-			8  ) { test -n "$_tuish_held" && _mouse="alt-drop" && _tuish_held='' ;} || _mouse='alt-lclik';;
-			9  ) { test -n "$_tuish_held" && _mouse="alt-drop" && _tuish_held='' ;} || _mouse='alt-mclik';;
-			10 ) { test -n "$_tuish_held" && _mouse="alt-drop" && _tuish_held='' ;} || _mouse='alt-rclik';;
-			16|96 ) { test -n "$_tuish_held" && _mouse="ctrl-drop" && _tuish_held='' ;} || _mouse='ctrl-lclik';;
-			17|97 ) { test -n "$_tuish_held" && _mouse="ctrl-drop" && _tuish_held='' ;} || _mouse='ctrl-mclik';;
-			18|98 ) { test -n "$_tuish_held" && _mouse="ctrl-drop" && _tuish_held='' ;} || _mouse='ctrl-rclik';;
-			24 ) { test -n "$_tuish_held" && _mouse="ctrl-alt-drop" && _tuish_held='' ;} || _mouse='ctrl-alt-lclik';;
-			25 ) { test -n "$_tuish_held" && _mouse="ctrl-alt-drop" && _tuish_held='' ;} || _mouse='ctrl-alt-mclik';;
-			26 ) { test -n "$_tuish_held" && _mouse="ctrl-alt-drop" && _tuish_held='' ;} || _mouse='ctrl-alt-rclik';;
-			32 ) _mouse='lhold' && _tuish_held='ldrop';;
-			33 ) _mouse='mhold' && _tuish_held='mdrop';;
-			34 ) _mouse='rhold' && _tuish_held='rdrop';;
-			35 ) _mouse='move' && _tuish_held='';;
-			36 ) _mouse='shift-lhold' && _tuish_held='ldrop';;
-			37 ) _mouse='shift-mhold' && _tuish_held='mdrop';;
-			38 ) _mouse='shift-rhold' && _tuish_held='rdrop';;
-			39 ) _mouse='shift-move' && _tuish_held='';;
-			40 ) _mouse='alt-lhold' && _tuish_held='ldrop';;
-			41 ) _mouse='alt-mhold' && _tuish_held='mdrop';;
-			42 ) _mouse='alt-rhold' && _tuish_held='rdrop';;
-			43 ) _mouse='alt-move' && _tuish_held='';;
-			48 ) _mouse='ctrl-lhold' && _tuish_held='ldrop';;
-			49 ) _mouse='ctrl-mhold' && _tuish_held='mdrop';;
-			50 ) _mouse='ctrl-rhold' && _tuish_held='rdrop';;
-			51 ) _mouse='ctrl-move' && _tuish_held='';;
-			56 ) _mouse='ctrl-alt-lhold' && _tuish_held='ldrop';;
-			57 ) _mouse='ctrl-alt-mhold' && _tuish_held='mdrop';;
-			58 ) _mouse='ctrl-alt-rhold' && _tuish_held='rdrop';;
-			59 ) _mouse='ctrl-alt-move' && _tuish_held='';;
-			64 ) _mouse='whup';;
-			65 ) _mouse='wdown';;
-			68 ) _mouse='shift-whup';;
-			69 ) _mouse='shift-wdown';;
-			72 ) _mouse='alt-whup';;
-			73 ) _mouse='alt-wdown';;
-			80 ) _mouse='ctrl-whup';;
-			81 ) _mouse='ctrl-wdown';;
-			88 ) _mouse='ctrl-alt-whup';;
-			89 ) _mouse='ctrl-alt-wdown';;
-			*  ) _mouse="${2:-}" && _tuish_held='';;
-		esac
-		fi
-		TUISH_MOUSE_X=$3
-		TUISH_MOUSE_Y=$4
-		TUISH_MOUSE_ABS_Y=$4
-		if test -n "$_tuish_view_mode"
-		then
-			TUISH_MOUSE_Y=$(($4 - TUISH_VIEW_TOP + 1))
-		fi
-		TUISH_EVENT="$_mouse"
+		_tuish_resolve_mouse "$@"
 
 	elif test "$_class" = 'E'
 	then
