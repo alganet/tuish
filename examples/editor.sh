@@ -734,56 +734,60 @@ _render_sel_line ()
 	tuish_str_len _line
 	local _len=$TUISH_SLEN
 
-	# Selection bounds in character coordinates
+	# Selection bounds in character coordinates: _s = first selected char,
+	# _e = one past the last (both 1-based).
 	local _s=1 _e=$((_len + 1))
 	test $_lnum -eq $_sr1 && _s=$_sc1
 	test $_lnum -eq $_sr2 && _e=$_sc2
 
-	# Visible window in character coordinates (1-based).
-	# TODO (Step D): _view_left is now a DISPLAY-COLUMN offset, but this still
-	# treats it as a character index and char-slices ${_line:off:len}. Correct
-	# for ASCII (col == char == byte); misaligns selection highlight on lines
-	# with wide/combining chars. Migrate to tuish_str_window when selection
-	# rendering goes column-aware.
-	local _vl=$((_view_left + 1))
-	local _vr=$((_view_left + _view_width))
+	# Convert those char bounds to display columns (0-based), the same way
+	# _compute_dcol maps the cursor: width of the line prefix before each.
+	tuish_str_left _line $((_s - 1)); local _pre="$TUISH_SLEFT"
+	tuish_str_width _pre; local _sel_c0=$TUISH_SWIDTH
+	tuish_str_left _line $((_e - 1)); _pre="$TUISH_SLEFT"
+	tuish_str_width _pre; local _sel_c1=$TUISH_SWIDTH
 
-	# Clamp to visible window
-	local _vs=$_s _ve=$_e
-	test $_vs -lt $_vl && _vs=$_vl
-	test $_ve -gt $((_vr + 1)) && _ve=$((_vr + 1))
+	# Visible window in display columns: [_view_left, _vw_r).
+	local _vw_r=$((_view_left + _view_width))
 
-	# Before selection (in visible window)
-	if test $_vl -lt $_vs
+	# Three column sub-windows of the line — before (normal), selected
+	# (reverse), after (normal) — each clipped to the visible window. Splitting
+	# at a char-aligned column boundary tiles to the same glyphs as
+	# _render_clipped_line, with tuish_str_window handling the edge straddles.
+	local _off _end _w
+
+	# Before selection.
+	_end=$_sel_c0
+	test $_end -gt $_vw_r && _end=$_vw_r
+	_w=$((_end - _view_left))
+	if test $_w -gt 0
 	then
-		local _bs=$((_vl - 1))
-		local _bl=$((_vs - _vl))
-		eval "local _bstr=\"\${_line:$_bs:$_bl}\""
-		tuish_print "$_bstr"
+		tuish_str_window _line $_view_left $_w
+		tuish_print "$TUISH_SWINDOW"
 	fi
 
-	# Selected text (in visible window)
-	if test $_ve -gt $_vs
+	# Selected text.
+	_off=$_sel_c0
+	test $_off -lt $_view_left && _off=$_view_left
+	_end=$_sel_c1
+	test $_end -gt $_vw_r && _end=$_vw_r
+	_w=$((_end - _off))
+	if test $_w -gt 0
 	then
 		tuish_sgr '7'
-		local _sst=$((_vs - 1))
-		local _ssl=$((_ve - _vs))
-		eval "local _ssel=\"\${_line:$_sst:$_ssl}\""
-		tuish_print "$_ssel"
+		tuish_str_window _line $_off $_w
+		tuish_print "$TUISH_SWINDOW"
 		tuish_sgr_reset
 	fi
 
-	# After selection (in visible window)
-	if test $_ve -le $_vr && test $_ve -le $((_len + 1))
+	# After selection.
+	_off=$_sel_c1
+	test $_off -lt $_view_left && _off=$_view_left
+	_w=$((_vw_r - _off))
+	if test $_w -gt 0
 	then
-		local _as=$((_ve - 1))
-		local _al=$((_vr - _ve + 1))
-		test $((_as + _al)) -gt $_len && _al=$((_len - _as))
-		if test $_al -gt 0
-		then
-			eval "local _astr=\"\${_line:$_as:$_al}\""
-			tuish_print "$_astr"
-		fi
+		tuish_str_window _line $_off $_w
+		tuish_print "$TUISH_SWINDOW"
 	fi
 }
 
