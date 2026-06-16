@@ -424,4 +424,32 @@ tuish_draw_text 1 38 "abcdefghij"
 assert_contains "$_draw_out" "abc"     "draw_text right-edge: prints the fitting head (cols 38-40)"
 refute_contains "$_draw_out" "abcd"    "draw_text right-edge: trimmed to the 3 available columns"
 
+# ─── tuish_draw_centered + tuish_overlay ─────────────────────────
+# Mocked tuish_vmove records "[Mrow,col]", so the centered column is observable.
+TUISH_VIEW_COLS=40 TUISH_VIEW_ROWS=20
+
+_draw_out=''
+tuish_draw_centered 1 "hello"               # w5 in 40 -> 1 + (40-5)/2 = 18
+assert_contains "$_draw_out" "[M1,18]" "centered: ascii 'hello' at col 18"
+assert_contains "$_draw_out" "hello"   "centered: ascii text drawn"
+
+_draw_out=''
+tuish_draw_centered 2 "a中b"                # display width 4 (not byte length 5)
+assert_contains "$_draw_out" "[M2,19]" "centered: width-aware (wide char counts as 2)"
+
+_draw_out=''
+tuish_draw_centered 5 "hi" col=10 width=8   # 10 + (8-2)/2 = 13
+assert_contains "$_draw_out" "[M5,13]" "centered: within an explicit column band"
+
+_draw_out=''
+tuish_draw_centered 1 "abcdefghij" width=4  # wider than band -> floored to band col
+assert_contains "$_draw_out" "[M1,1]"  "centered: text wider than band floors to band col"
+
+_draw_out=''
+tuish_overlay "Hi" "Bye"                    # maxw3 -> box 7x4, centered in 40x20
+assert_contains "$_draw_out" "Hi"      "overlay: line 1 present"
+assert_contains "$_draw_out" "Bye"     "overlay: line 2 present"
+assert_contains "$_draw_out" "[M10,19]" "overlay: line 1 centered inside the box"
+assert_contains "$_draw_out" "[M11,19]" "overlay: line 2 centered inside the box"
+
 test_summary

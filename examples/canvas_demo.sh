@@ -45,6 +45,7 @@ P0_C=2 P1_C=24
 
 # Per-panel state: scroll top (0-based), selected line, horizontal pan.
 _focus=0
+_help=0
 _top_0=0 _sel_0=0 _h_0=0
 _top_1=0 _sel_1=0 _h_1=0
 
@@ -104,7 +105,21 @@ _render ()
 	tuish_canvas_off
 	local _fl=LEFT
 	test "$_focus" -eq 1 && _fl=RIGHT
-	tuish_print_at $(( BOX_R + BOX_H )) 1 "focus: $_fl   (clipped rows never leak between panels)"
+	tuish_print_at $(( BOX_R + BOX_H )) 1 "focus: $_fl   ?: help   (clipped rows never leak between panels)"
+
+	# A centered modal overlay, drawn last so it sits opaque OVER the panels.
+	if test "$_help" -eq 1
+	then
+		tuish_canvas_off
+		tuish_overlay \
+			"canvas demo — keys" \
+			"" \
+			"Tab    switch panel" \
+			"up/dn  scroll + select" \
+			"lt/rt  pan horizontally" \
+			"?      toggle this help" \
+			"q      quit"
+	fi
 	tuish_flush
 }
 
@@ -132,8 +147,9 @@ _pan ()   # $1 delta
 	tuish_request_redraw
 }
 
-_toggle () { _focus=$(( 1 - _focus )); tuish_request_redraw; }
-_q ()      { tuish_quit_clear; return 0; }
+_toggle ()      { _focus=$(( 1 - _focus )); tuish_request_redraw; }
+_toggle_help () { _help=$(( 1 - _help )); tuish_request_redraw; }
+_q ()           { tuish_quit_clear; return 0; }
 
 tuish_on_redraw () { _render; }
 
@@ -144,6 +160,7 @@ tuish_bind 'down'    '_panel_move 1'
 tuish_bind 'char j'  '_panel_move 1'
 tuish_bind 'left'    '_pan -1'
 tuish_bind 'right'   '_pan 1'
+tuish_bind 'char ?'  '_toggle_help'
 tuish_bind 'ctrl-w'  '_q'
 tuish_bind 'char q'  '_q'
 tuish_bind 'resize'  'tuish_request_redraw'

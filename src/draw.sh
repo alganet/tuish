@@ -20,6 +20,12 @@
 #   tuish_draw_set_origin ROW COL - offset subtracted from coordinates
 #   tuish_draw_set_clip TOP BOT   - vertical clip region (screen rows)
 #   tuish_draw_reset_clip          - disable clipping
+#
+# Text:
+#   tuish_draw_text ROW COL TEXT [maxwidth=N] [fg=N] [bg=N] - positioned text
+#   tuish_draw_centered ROW TEXT [col=N] [width=N] [fg=N] [bg=N]
+#       - center TEXT (display-width-aware) in a column band (default: viewport)
+#   tuish_overlay LINE [LINE...] - centered, auto-sized, opaque modal box
 
 # ─── Locale (reads originals saved by compat.sh before LC_ALL=C) ──
 
@@ -963,4 +969,61 @@ tuish_draw_text ()
 	_tuish_draw_set_bg $_dt_bg
 	tuish_print "$_dt_text"
 	_tuish_clipped=0; tuish_sgr_reset
+}
+
+# tuish_draw_centered ROW TEXT [col=N] [width=N] [fg=N] [bg=N]
+# Center TEXT (display-width-aware, so wide glyphs count as 2) within the column
+# band [col, col+width) — defaults to the whole viewport. Delegates to
+# tuish_draw_text, so color and edge clipping come for free. Intended for use
+# with the canvas off (plain viewport coordinates).
+tuish_draw_centered ()
+{
+	local _ce_row=$1 _ce_text="$2" _ce_fg=-1 _ce_bg=-1 _ce_col=1 _ce_w=$TUISH_VIEW_COLS
+	shift 2
+	while test $# -gt 0
+	do
+		case "$1" in
+			fg=*)    _ce_fg="${1#*=}";;
+			bg=*)    _ce_bg="${1#*=}";;
+			col=*)   _ce_col="${1#*=}";;
+			width=*) _ce_w="${1#*=}";;
+		esac
+		shift
+	done
+	tuish_str_width _ce_text
+	local _ce_tc=$(( _ce_col + (_ce_w - TUISH_SWIDTH) / 2 ))
+	test $_ce_tc -lt $_ce_col && _ce_tc=$_ce_col
+	tuish_draw_text "$_ce_row" "$_ce_tc" "$_ce_text" fg="$_ce_fg" bg="$_ce_bg"
+}
+
+# tuish_overlay LINE [LINE...]
+# A centered, auto-sized modal box (one argument per line) drawn over the
+# viewport, each line centered inside. Opaque: the interior is cleared to the
+# default background first, so it covers whatever is behind it. Use with the
+# canvas off. For splash screens, dialogs, and "press a key" / "too small"
+# notices.
+tuish_overlay ()
+{
+	local _ov_maxw=0 _ov_n=$# _ov_t
+	for _ov_t in "$@"
+	do
+		tuish_str_width _ov_t
+		test "$TUISH_SWIDTH" -gt "$_ov_maxw" && _ov_maxw=$TUISH_SWIDTH
+	done
+	local _ov_iw=$(( _ov_maxw + 2 ))    # interior: one column of padding each side
+	local _ov_bw=$(( _ov_iw + 2 ))      # plus the two border columns
+	local _ov_bh=$(( _ov_n + 2 ))       # lines plus the two border rows
+	local _ov_br=$(( (TUISH_VIEW_ROWS - _ov_bh) / 2 + 1 ))
+	local _ov_bc=$(( (TUISH_VIEW_COLS - _ov_bw) / 2 + 1 ))
+	test "$_ov_br" -lt 1 && _ov_br=1
+	test "$_ov_bc" -lt 1 && _ov_bc=1
+	tuish_clear_region "$_ov_br" "$_ov_bc" "$_ov_bw" "$_ov_bh"
+	tuish_draw_box "$_ov_br" "$_ov_bc" "$_ov_bw" "$_ov_bh" style=double
+	local _ov_i=0
+	for _ov_t in "$@"
+	do
+		tuish_draw_centered $(( _ov_br + 1 + _ov_i )) "$_ov_t" \
+			col=$(( _ov_bc + 1 )) width="$_ov_iw"
+		_ov_i=$(( _ov_i + 1 ))
+	done
 }
