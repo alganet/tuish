@@ -10,22 +10,25 @@
 #   tuish_unbind EVENT        - remove binding
 #   tuish_dispatch            - dispatch TUISH_EVENT through bindings
 #
-# Bindings are stored as variables: _tuish_kb_<sanitized_event>=action
-# Events with special chars are sanitized: - → _D  . → _P  * → _S  space → _W
+# Bindings are stored as variables: _tuish_kb_<sanitized_event>=action.
+# The event name is sanitized injectively: alphanumerics and the escape
+# underscores survive; every other byte (including a literal '_') becomes
+# _<decimal-ord>_, so two distinct events can never collide on one key.
 #
 # Dependencies: _tuish_ord() (from src/ord.sh)
 
-_tuish_kb_count=0
-
 _tuish_kb_sanitize ()
 {
-	# Event name → valid variable suffix (_tuish_kb_key)
+	# Event name -> injective variable suffix in _tuish_kb_key. Escaping the
+	# literal '_' first lets the common specials map to their own _<ord>_ form
+	# via fast ${//} (no per-char loop on the dispatch hot path); only rarely
+	# typed bytes fall through to the char-by-char encoder.
 	_tuish_kb_key="$1"
-	_tuish_kb_key="${_tuish_kb_key//-/_D}"
-	_tuish_kb_key="${_tuish_kb_key//./_P}"
-	_tuish_kb_key="${_tuish_kb_key//\*/_S}"
-	_tuish_kb_key="${_tuish_kb_key// /_W}"
-	# If non-variable-safe chars remain (e.g. typed ' ; ( etc.), encode them
+	_tuish_kb_key="${_tuish_kb_key//_/_95_}"
+	_tuish_kb_key="${_tuish_kb_key//-/_45_}"
+	_tuish_kb_key="${_tuish_kb_key//./_46_}"
+	_tuish_kb_key="${_tuish_kb_key// /_32_}"
+	_tuish_kb_key="${_tuish_kb_key//\*/_42_}"
 	case "$_tuish_kb_key" in *[!A-Za-z0-9_]*)
 		local _kb_tmp="$_tuish_kb_key" _kb_out='' _kb_i=0 _kb_c
 		while test $_kb_i -lt ${#_kb_tmp}
@@ -41,65 +44,41 @@ _tuish_kb_sanitize ()
 	esac
 }
 
+# Catch-all key, resolved once (sanitize is pure for a fixed input).
+_tuish_kb_sanitize '*'
+_tuish_kb_star="$_tuish_kb_key"
+
 tuish_bind ()
 {
 	_tuish_kb_sanitize "$1"
 	eval "_tuish_kb_${_tuish_kb_key}=\"\$2\""
-	# Track event name for iteration
-	_tuish_kb_count=$((_tuish_kb_count + 1))
-	eval "_tuish_kb_ev_${_tuish_kb_count}=\"\$1\""
 }
 
 tuish_unbind ()
 {
 	_tuish_kb_sanitize "$1"
 	eval "unset _tuish_kb_${_tuish_kb_key}"
-	# Remove from event list
-	local _ub_i=1
-	while test $_ub_i -le $_tuish_kb_count
-	do
-		eval "local _ub_ev=\"\${_tuish_kb_ev_${_ub_i}:-}\""
-		if test "$_ub_ev" = "$1"
-		then
-			eval "unset _tuish_kb_ev_${_ub_i}"
-			break
-		fi
-		_ub_i=$((_ub_i + 1))
-	done
 }
 
 tuish_dispatch ()
 {
-	# Try exact match first
+	# Exact match
 	_tuish_kb_sanitize "$TUISH_EVENT"
 	eval "local _d_action=\"\${_tuish_kb_${_tuish_kb_key}:-}\""
-	if test -n "$_d_action"
-	then
-		eval "$_d_action"
-		return 0
-	fi
+	if test -n "$_d_action"; then eval "$_d_action"; return 0; fi
 
-	# Try glob-style prefix match: "char *" matches any "char X"
-	# Check "char *" for events like "char a", "char b", etc.
+	# Glob prefix: a "char *" binding matches any "char X"
 	local _d_prefix="${TUISH_EVENT%% *}"
 	if test "$_d_prefix" != "$TUISH_EVENT"
 	then
 		_tuish_kb_sanitize "${_d_prefix} *"
 		eval "_d_action=\"\${_tuish_kb_${_tuish_kb_key}:-}\""
-		if test -n "$_d_action"
-		then
-			eval "$_d_action"
-			return 0
-		fi
+		if test -n "$_d_action"; then eval "$_d_action"; return 0; fi
 	fi
 
-	# Try wildcard catch-all (sanitize("*") = "_S", hardcoded)
-	eval "_d_action=\"\${_tuish_kb__S:-}\""
-	if test -n "$_d_action"
-	then
-		eval "$_d_action"
-		return 0
-	fi
+	# Wildcard catch-all "*"
+	eval "_d_action=\"\${_tuish_kb_${_tuish_kb_star}:-}\""
+	if test -n "$_d_action"; then eval "$_d_action"; return 0; fi
 
 	return 1
 }

@@ -122,4 +122,18 @@ TUISH_EVENT='enter'
 tuish_dispatch
 assert_eq "$_over" "second" "bind: rebind overwrites"
 
+# --- Injective encoding: an event must not collide with another event whose
+# literal name resembles the first's escaped form. (Old scheme: 'a-b' -> a_Db
+# collided with a literal 'a_Db'.)
+_inj1='' _inj2=''
+tuish_bind 'a-b' '_inj1=dash'
+tuish_bind 'a_45_b' '_inj2=literal'
+TUISH_EVENT='a-b'
+tuish_dispatch
+assert_eq "$_inj1" "dash" "inject: a-b fires its own action"
+assert_eq "$_inj2" "" "inject: a-b does not trigger literal a_45_b"
+TUISH_EVENT='a_45_b'
+tuish_dispatch
+assert_eq "$_inj2" "literal" "inject: literal a_45_b fires its own action"
+
 test_summary
