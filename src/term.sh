@@ -194,17 +194,10 @@ tuish_move_left ()      { _tuish_write "\033[${1:-1}D"; }
 tuish_clear_region ()
 {
 	local _cr_r=$1 _cr_c=$2 _cr_w=$3 _cr_h=$4 _cr_i=0
-	# Build a row of _cr_w spaces by O(log n) doubling. This repeats the
-	# algorithm in _tuish_str_repeat (str.sh) on purpose: term.sh depends
-	# only on tui.sh and is sourced without str.sh in minimal setups
-	# (see README quick-start and examples/slow_menu.sh), so it cannot
-	# call into str.sh here.
-	local _cr_spaces='' _cr_n=$_cr_w _cr_s=' '
-	while test $_cr_n -gt 0; do
-		test $((_cr_n & 1)) -ne 0 && _cr_spaces="${_cr_spaces}${_cr_s}"
-		_cr_s="${_cr_s}${_cr_s}"
-		_cr_n=$((_cr_n >> 1))
-	done
+	# Row of _cr_w spaces via the shared base-module primitive (term.sh and
+	# str.sh both build repeated strings but each depends only on tui.sh).
+	_tuish_repeat ' ' "$_cr_w"
+	local _cr_spaces=$_tuish_rep
 	while test $_cr_i -lt $_cr_h; do
 		if tuish_vmove $((_cr_r + _cr_i)) "$_cr_c"
 		then _tuish_write "$_cr_spaces"

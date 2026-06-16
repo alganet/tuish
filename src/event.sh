@@ -137,7 +137,9 @@ _tuish_parse_event ()
 			local _level=$_tuish_redraw_level
 			_tuish_redraw_level=0
 			_tuish_buffering=1
-			_tuish_buf='\033[?25l'
+			_tuish_buf=''
+			_tuish_clipped=0
+			tuish_hide_cursor
 			_tuish_cursor_vrow=0
 			tuish_on_redraw "$_level"
 			test -n "$_tuish_buf" && _tuish_out "$_tuish_buf"

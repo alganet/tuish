@@ -87,15 +87,9 @@ tuish_str_char ()
 # Result in TUISH_SREPEATED (legacy: _tuish_srepeated).
 _tuish_str_repeat ()
 {
-	local _sr_s="$1" _sr_n=$2
-	_tuish_srepeated=''
-	while test $_sr_n -gt 0
-	do
-		test $((_sr_n & 1)) -ne 0 && _tuish_srepeated="${_tuish_srepeated}${_sr_s}"
-		_sr_s="${_sr_s}${_sr_s}"
-		_sr_n=$((_sr_n >> 1))
-	done
-	TUISH_SREPEATED=$_tuish_srepeated
+	_tuish_repeat "$1" "$2"
+	_tuish_srepeated=$_tuish_rep
+	TUISH_SREPEATED=$_tuish_rep
 }
 tuish_str_repeat () { _tuish_str_repeat "$@"; }
 

@@ -64,6 +64,22 @@ tuish_begin ()          { _tuish_clipped=0; _tuish_buffering=1; _tuish_buf=''; }
 tuish_end ()            { test -n "$_tuish_buf" && _tuish_out "$_tuish_buf"; _tuish_buf=''; _tuish_buffering=0; }
 tuish_flush ()          { test -n "$_tuish_buf" && _tuish_out "$_tuish_buf"; _tuish_buf=''; }
 
+# Repeat string $1 exactly $2 times into _tuish_rep. O(log n) via doubling.
+# Shared primitive in the base module: str.sh (tuish_str_repeat) and term.sh
+# (tuish_clear_region) both build repeated strings and depend only on tui.sh,
+# so this lets them share one implementation instead of each inlining the loop.
+_tuish_repeat ()
+{
+	local _rp_s="$1" _rp_n=$2
+	_tuish_rep=''
+	while test $_rp_n -gt 0
+	do
+		test $((_rp_n & 1)) -ne 0 && _tuish_rep="${_tuish_rep}${_rp_s}"
+		_rp_s="${_rp_s}${_rp_s}"
+		_rp_n=$((_rp_n >> 1))
+	done
+}
+
 # DECSC/DECRC are ESC followed by a digit. Emit a literal ESC byte (from
 # the ord table) rather than a backslash escape, because no single escape
 # form survives every shell's printf/echo: `\x1b7` reads as hex 0x1b7 on
@@ -216,7 +232,6 @@ tuish_init ()
 				_i=$((_i - 1))
 			done
 			eval "$(:)" 2>/dev/null
-			test -n "${_tuish_signal:-}" && return 1
 			return 1
 		}
 		# zsh read -t0 reads a byte when one is available (unlike bash which
