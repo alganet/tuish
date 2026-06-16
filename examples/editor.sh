@@ -37,7 +37,7 @@ _status_msg=''
 
 _clamp_col ()
 {
-	tuish_buf_get $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_len _line
 	if test $_cur_col -gt $((TUISH_SLEN + 1))
 	then
@@ -49,7 +49,7 @@ _clamp_col ()
 # Display column (0-based) of the cursor: width of the line prefix before it.
 _compute_dcol ()
 {
-	tuish_buf_get $_cur_row
+	tuish_buf_get _ $_cur_row
 	local _dc="$TUISH_BLINE"
 	tuish_str_left _dc $((_cur_col - 1))
 	local _dcp="$TUISH_SLEFT"
@@ -63,7 +63,7 @@ _col_to_char ()
 {
 	local _target=$1
 	test $_target -lt 0 && _target=0
-	tuish_buf_get $_cur_row
+	tuish_buf_get _ $_cur_row
 	local _ctc="$TUISH_BLINE"
 	tuish_str_len _ctc
 	local _ctc_len=$TUISH_SLEN _ctc_i=0 _ctc_col=0 _ctc_ch
@@ -128,14 +128,14 @@ _start_sel ()
 
 _word_left ()
 {
-	tuish_buf_get $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
 	if test $_cur_col -le 1
 	then
 		# Move to end of previous line
 		if test $_cur_row -gt 1
 		then
 			_cur_row=$((_cur_row - 1))
-			tuish_buf_get $_cur_row; _line="$TUISH_BLINE"
+			tuish_buf_get _ $_cur_row; _line="$TUISH_BLINE"
 			tuish_str_len _line
 			_cur_col=$((TUISH_SLEN + 1))
 		fi
@@ -176,7 +176,7 @@ _word_left ()
 
 _word_right ()
 {
-	tuish_buf_get $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_len _line
 	local _len=$TUISH_SLEN
 
@@ -237,27 +237,27 @@ _delete_selection ()
 	if test $_sr1 -eq $_sr2
 	then
 		# Same line: delete columns
-		tuish_buf_get $_sr1; local _line="$TUISH_BLINE"
+		tuish_buf_get _ $_sr1; local _line="$TUISH_BLINE"
 		tuish_str_left _line $((_sc1 - 1))
 		local _left="$TUISH_SLEFT"
 		tuish_str_right _line $((_sc2 - 1))
-		tuish_buf_set $_sr1 "${_left}${TUISH_SRIGHT}"
+		tuish_buf_set _ $_sr1 "${_left}${TUISH_SRIGHT}"
 	else
 		# Multi-line: join first and last, delete middle
-		tuish_buf_get $_sr1; local _first="$TUISH_BLINE"
+		tuish_buf_get _ $_sr1; local _first="$TUISH_BLINE"
 		tuish_str_left _first $((_sc1 - 1))
 		local _head="$TUISH_SLEFT"
 
-		tuish_buf_get $_sr2; local _last="$TUISH_BLINE"
+		tuish_buf_get _ $_sr2; local _last="$TUISH_BLINE"
 		tuish_str_right _last $((_sc2 - 1))
 		local _tail="$TUISH_SRIGHT"
 
-		tuish_buf_set $_sr1 "${_head}${_tail}"
+		tuish_buf_set _ $_sr1 "${_head}${_tail}"
 
 		local _d=$_sr2
 		while test $_d -gt $_sr1
 		do
-			tuish_buf_delete_at $((_sr1 + 1))
+			tuish_buf_delete_at _ $((_sr1 + 1))
 			_d=$((_d - 1))
 		done
 	fi
@@ -298,7 +298,7 @@ _ed_left ()
 	elif test $_cur_row -gt 1
 	then
 		_cur_row=$((_cur_row - 1))
-		tuish_buf_get $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+		tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 		_cur_col=$((TUISH_SLEN + 1))
 	fi
 }
@@ -306,7 +306,7 @@ _ed_left ()
 _ed_right ()
 {
 	_clear_sel
-	tuish_buf_get $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	if test $_cur_col -le $TUISH_SLEN
 	then
 		_cur_col=$((_cur_col + 1))
@@ -322,7 +322,7 @@ _ed_home ()      { _clear_sel; _cur_col=1; }
 _ed_end ()
 {
 	_clear_sel
-	tuish_buf_get $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	_cur_col=$((TUISH_SLEN + 1))
 }
 
@@ -335,7 +335,7 @@ _ed_bottom ()
 {
 	_clear_sel
 	_cur_row=$TUISH_BUF_COUNT
-	tuish_buf_get $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	_cur_col=$((TUISH_SLEN + 1))
 }
 
@@ -379,7 +379,7 @@ _ed_sel_left ()
 	elif test $_cur_row -gt 1
 	then
 		_cur_row=$((_cur_row - 1))
-		tuish_buf_get $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+		tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 		_cur_col=$((TUISH_SLEN + 1))
 	fi
 	tuish_request_redraw
@@ -388,7 +388,7 @@ _ed_sel_left ()
 _ed_sel_right ()
 {
 	_start_sel
-	tuish_buf_get $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	if test $_cur_col -le $TUISH_SLEN
 	then
 		_cur_col=$((_cur_col + 1))
@@ -404,7 +404,7 @@ _ed_sel_home ()  { _start_sel; _cur_col=1; tuish_request_redraw; }
 _ed_sel_end ()
 {
 	_start_sel
-	tuish_buf_get $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	_cur_col=$((TUISH_SLEN + 1)); tuish_request_redraw
 }
 
@@ -415,7 +415,7 @@ _ed_sel_top ()        { _start_sel; _cur_row=1; _cur_col=1; tuish_request_redraw
 _ed_sel_bottom ()
 {
 	_start_sel; _cur_row=$TUISH_BUF_COUNT
-	tuish_buf_get $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	_cur_col=$((TUISH_SLEN + 1)); tuish_request_redraw
 }
 
@@ -467,11 +467,11 @@ _ed_insert_char ()
 	local _ch="${TUISH_EVENT#char }"
 	test "$_ch" = 'bslash' && _ch='\'
 	test $_sel_row -ne 0 && _delete_selection
-	tuish_buf_get $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_left _line $((_cur_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_cur_col - 1))
-	tuish_buf_set $_cur_row "${_left}${_ch}${TUISH_SRIGHT}"
+	tuish_buf_set _ $_cur_row "${_left}${_ch}${TUISH_SRIGHT}"
 	_cur_col=$((_cur_col + 1))
 	_ed_render_line_now
 	tuish_request_redraw 1
@@ -480,11 +480,11 @@ _ed_insert_char ()
 _ed_space ()
 {
 	test $_sel_row -ne 0 && _delete_selection
-	tuish_buf_get $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_left _line $((_cur_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_cur_col - 1))
-	tuish_buf_set $_cur_row "${_left} ${TUISH_SRIGHT}"
+	tuish_buf_set _ $_cur_row "${_left} ${TUISH_SRIGHT}"
 	_cur_col=$((_cur_col + 1))
 	_ed_render_line_now
 	tuish_request_redraw 1
@@ -493,11 +493,11 @@ _ed_space ()
 _ed_tab ()
 {
 	test $_sel_row -ne 0 && _delete_selection
-	tuish_buf_get $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_left _line $((_cur_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_cur_col - 1))
-	tuish_buf_set $_cur_row "${_left}    ${TUISH_SRIGHT}"
+	tuish_buf_set _ $_cur_row "${_left}    ${TUISH_SRIGHT}"
 	_cur_col=$((_cur_col + 4))
 	_ed_render_line_now
 	tuish_request_redraw 1
@@ -506,13 +506,13 @@ _ed_tab ()
 _ed_enter ()
 {
 	test $_sel_row -ne 0 && _delete_selection
-	tuish_buf_get $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_left _line $((_cur_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_cur_col - 1))
 	local _right="$TUISH_SRIGHT"
-	tuish_buf_set $_cur_row "$_left"
-	tuish_buf_insert_at $((_cur_row + 1)) "$_right"
+	tuish_buf_set _ $_cur_row "$_left"
+	tuish_buf_insert_at _ $((_cur_row + 1)) "$_right"
 	_cur_row=$((_cur_row + 1))
 	_cur_col=1
 	tuish_request_redraw
@@ -525,23 +525,23 @@ _ed_bksp ()
 		_delete_selection
 	elif test $_cur_col -gt 1
 	then
-		tuish_buf_get $_cur_row; local _line="$TUISH_BLINE"
+		tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
 		tuish_str_left _line $((_cur_col - 2))
 		local _left="$TUISH_SLEFT"
 		tuish_str_right _line $((_cur_col - 1))
-		tuish_buf_set $_cur_row "${_left}${TUISH_SRIGHT}"
+		tuish_buf_set _ $_cur_row "${_left}${TUISH_SRIGHT}"
 		_cur_col=$((_cur_col - 1))
 		_ed_render_line_now
 		tuish_request_redraw 1
 	elif test $_cur_row -gt 1
 	then
 		# Join with previous line
-		tuish_buf_get $((_cur_row - 1)); local _prev="$TUISH_BLINE"
-		tuish_buf_get $_cur_row; local _curr="$TUISH_BLINE"
+		tuish_buf_get _ $((_cur_row - 1)); local _prev="$TUISH_BLINE"
+		tuish_buf_get _ $_cur_row; local _curr="$TUISH_BLINE"
 		tuish_str_len _prev
 		local _newcol=$((TUISH_SLEN + 1))
-		tuish_buf_set $((_cur_row - 1)) "${_prev}${_curr}"
-		tuish_buf_delete_at $_cur_row
+		tuish_buf_set _ $((_cur_row - 1)) "${_prev}${_curr}"
+		tuish_buf_delete_at _ $_cur_row
 		_cur_row=$((_cur_row - 1))
 		_cur_col=$_newcol
 		tuish_request_redraw
@@ -554,22 +554,22 @@ _ed_del ()
 	then
 		_delete_selection
 	else
-		tuish_buf_get $_cur_row; local _line="$TUISH_BLINE"
+		tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
 		tuish_str_len _line
 		if test $_cur_col -le $TUISH_SLEN
 		then
 			tuish_str_left _line $((_cur_col - 1))
 			local _left="$TUISH_SLEFT"
 			tuish_str_right _line $_cur_col
-			tuish_buf_set $_cur_row "${_left}${TUISH_SRIGHT}"
+			tuish_buf_set _ $_cur_row "${_left}${TUISH_SRIGHT}"
 			_ed_render_line_now
 			tuish_request_redraw 1
 		elif test $_cur_row -lt $TUISH_BUF_COUNT
 		then
 			# Join with next line
-			tuish_buf_get $((_cur_row + 1)); local _next="$TUISH_BLINE"
-			tuish_buf_set $_cur_row "${_line}${_next}"
-			tuish_buf_delete_at $((_cur_row + 1))
+			tuish_buf_get _ $((_cur_row + 1)); local _next="$TUISH_BLINE"
+			tuish_buf_set _ $_cur_row "${_line}${_next}"
+			tuish_buf_delete_at _ $((_cur_row + 1))
 			tuish_request_redraw
 		fi
 	fi
@@ -587,12 +587,12 @@ _ed_del_word_left ()
 		# At start of line: join with previous (same as bksp)
 		if test $_cur_row -gt 1
 		then
-			tuish_buf_get $((_cur_row - 1)); local _prev="$TUISH_BLINE"
-			tuish_buf_get $_cur_row; local _curr="$TUISH_BLINE"
+			tuish_buf_get _ $((_cur_row - 1)); local _prev="$TUISH_BLINE"
+			tuish_buf_get _ $_cur_row; local _curr="$TUISH_BLINE"
 			tuish_str_len _prev
 			local _newcol=$((TUISH_SLEN + 1))
-			tuish_buf_set $((_cur_row - 1)) "${_prev}${_curr}"
-			tuish_buf_delete_at $_cur_row
+			tuish_buf_set _ $((_cur_row - 1)) "${_prev}${_curr}"
+			tuish_buf_delete_at _ $_cur_row
 			_cur_row=$((_cur_row - 1))
 			_cur_col=$_newcol
 			tuish_request_redraw
@@ -601,11 +601,11 @@ _ed_del_word_left ()
 	fi
 	local _old_col=$_cur_col
 	_word_left
-	tuish_buf_get $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_left _line $((_cur_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_old_col - 1))
-	tuish_buf_set $_cur_row "${_left}${TUISH_SRIGHT}"
+	tuish_buf_set _ $_cur_row "${_left}${TUISH_SRIGHT}"
 	_ed_render_line_now
 	tuish_request_redraw 1
 }
@@ -617,16 +617,16 @@ _ed_del_word_right ()
 		_delete_selection
 		return
 	fi
-	tuish_buf_get $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_len _line
 	if test $_cur_col -gt $TUISH_SLEN
 	then
 		# At end of line: join with next (same as del)
 		if test $_cur_row -lt $TUISH_BUF_COUNT
 		then
-			tuish_buf_get $((_cur_row + 1)); local _next="$TUISH_BLINE"
-			tuish_buf_set $_cur_row "${_line}${_next}"
-			tuish_buf_delete_at $((_cur_row + 1))
+			tuish_buf_get _ $((_cur_row + 1)); local _next="$TUISH_BLINE"
+			tuish_buf_set _ $_cur_row "${_line}${_next}"
+			tuish_buf_delete_at _ $((_cur_row + 1))
 			tuish_request_redraw
 		fi
 		return
@@ -636,7 +636,7 @@ _ed_del_word_right ()
 	tuish_str_left _line $((_old_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_cur_col - 1))
-	tuish_buf_set $_cur_row "${_left}${TUISH_SRIGHT}"
+	tuish_buf_set _ $_cur_row "${_left}${TUISH_SRIGHT}"
 	_cur_col=$_old_col
 	_ed_render_line_now
 	tuish_request_redraw 1
@@ -700,7 +700,7 @@ _render ()
 
 		if test $_lnum -le $TUISH_BUF_COUNT
 		then
-			tuish_buf_get $_lnum; _line="$TUISH_BLINE"
+			tuish_buf_get _ $_lnum; _line="$TUISH_BLINE"
 
 			# Check if this line has selection
 			if test $_sr1 -ne 0 && test $_lnum -ge $_sr1 && test $_lnum -le $_sr2
@@ -848,7 +848,7 @@ _render_line ()
 	tuish_vmove $_vrow 1
 	if test $_lnum -le $TUISH_BUF_COUNT
 	then
-		tuish_buf_get $_lnum; local _rl_line="$TUISH_BLINE"
+		tuish_buf_get _ $_lnum; local _rl_line="$TUISH_BLINE"
 		_render_clipped_line "$_rl_line"
 	else
 		tuish_sgr '2'
@@ -973,11 +973,11 @@ _editor_main ()
 		_status_msg="$1"
 		while IFS= read -r _fline || test -n "$_fline"
 		do
-			tuish_buf_append "$_fline"
+			tuish_buf_append _ "$_fline"
 		done < "$1"
-		test $TUISH_BUF_COUNT -eq 0 && tuish_buf_append ''
+		test $TUISH_BUF_COUNT -eq 0 && tuish_buf_append _ ''
 	else
-		tuish_buf_init
+		tuish_buf_init _
 	fi
 
 	_render
