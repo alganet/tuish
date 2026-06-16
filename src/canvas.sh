@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: ISC
 
+# Load guard: skip re-definition if already sourced (see tui.sh).
+if test -n "${_tuish_canvas_loaded:-}"; then return 0; fi
+_tuish_canvas_loaded=1
 # src/canvas.sh - Canvas: a bounded drawing surface within the viewport
 # Optional module. Source after term.sh.
 #

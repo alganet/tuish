@@ -4,6 +4,9 @@
 #
 # SPDX-License-Identifier: ISC
 
+# Load guard: skip re-definition if already sourced (see tui.sh).
+if test -n "${_tuish_draw_loaded:-}"; then return 0; fi
+_tuish_draw_loaded=1
 # src/draw.sh - Box drawing with style support, mixed-style junctions, viewport clipping
 # Optional module. Source after term.sh and str.sh.
 #

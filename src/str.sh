@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: ISC
 
+# Load guard: skip re-definition if already sourced (see tui.sh).
+if test -n "${_tuish_str_loaded:-}"; then return 0; fi
+_tuish_str_loaded=1
 # src/str.sh - String utilities and Unicode width
 # Optional module. Source after tui.sh.
 #

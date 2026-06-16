@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: ISC
 
+# Load guard: skip re-definition if already sourced (see tui.sh).
+if test -n "${_tuish_keybind_loaded:-}"; then return 0; fi
+_tuish_keybind_loaded=1
 # src/keybind.sh - Declarative key binding dispatch
 # Optional module. Source after ord.sh.
 #

@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: ISC
 
+# Load guard: skip re-definition if already sourced (see tui.sh).
+if test -n "${_tuish_buf_loaded:-}"; then return 0; fi
+_tuish_buf_loaded=1
 # src/buf.sh - Line buffer with index-based operations
 # Optional module. Source after compat.sh.
 #

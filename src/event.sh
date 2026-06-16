@@ -19,6 +19,9 @@
 #   _tuish_dump_code       - route raw byte to parse_event
 #   _tuish_kitty_decode    - decode kitty CSI-u ords into the parameter string
 
+if test -n "${_tuish_event_loaded:-}"; then return 0; fi
+_tuish_event_loaded=1
+
 # ─── Redraw scheduling ────────────────────────────────────────────
 
 _tuish_redraw_requested=0
@@ -56,11 +59,8 @@ tuish_has_pending_input ()
 	return 1
 }
 
-# ─── Stubs (overridden by hid.sh, viewport.sh, keybind.sh) ───────
-
-_tuish_resolve_event ()    { :; }
-_tuish_viewport_on_resize () { :; }
-tuish_dispatch ()          { return 1; }
+# _tuish_resolve_event, _tuish_viewport_on_resize and tuish_dispatch are stubbed
+# in tui.sh (the base) and overridden by hid.sh / viewport.sh / keybind.sh.
 
 # ─── Default event handler (override in your app if needed) ──────
 

@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: ISC
 
+# Load guard: skip re-definition if already sourced (see tui.sh).
+if test -n "${_tuish_viewport_loaded:-}"; then return 0; fi
+_tuish_viewport_loaded=1
 # src/viewport.sh - Viewport modes (fullscreen, fixed, grow)
 # Optional module. Source after tui.sh and term.sh.
 #

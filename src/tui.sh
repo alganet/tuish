@@ -40,6 +40,12 @@
 # Source compat.sh before this file.  It provides:
 #   _tuish_printf, _tuish_out(), alias local=typeset (ksh93)
 
+# ─── Load guard ──────────────────────────────────────────────────
+# Sourcing tui.sh twice would reset all state and re-stub the overridable
+# functions, silently clobbering any optional module sourced in between.
+if test -n "${_tuish_tui_loaded:-}"; then return 0; fi
+_tuish_tui_loaded=1
+
 # ─── IO stubs (overridden by term.sh) ────────────────────────────
 # Minimal buffered-write and cursor primitives used by init/fini
 # and event.sh.  term.sh redefines these with the same behavior
@@ -91,9 +97,11 @@ tuish_hide_cursor ()    { _tuish_write '\033[?25l'; }
 tuish_cursor ()         { :; }
 tuish_reset_scroll ()   { _tuish_write '\033[r'; }
 
-# ─── HID state defaults ──────────────────────────────────────────
-# These are referenced by event.sh (filtering) and tuish_fini.
-# Toggle functions are provided by hid.sh.
+# ─── HID state defaults (ABI seam) ───────────────────────────────
+# event.sh reads these on the per-event hot path, so they live in the base and
+# must exist even when hid.sh is not sourced. Keeping them as plain globals (vs.
+# a hid.sh predicate call per event) is a deliberate hot-path choice. Toggle
+# functions and teardown (_tuish_hid_fini) are provided by hid.sh.
 
 _tuish_mouse=0
 _tuish_detailed=0
@@ -129,6 +137,15 @@ _tuish_get_byte () { return 1; }
 _tuish_idle_wait () { return 1; }
 _tuish_peek_byte () { return 1; }
 
+# Overridable hooks declared in the base so the override arrow always points
+# base -> optional module: each module below just redefines its hook. Declaring
+# them in a sibling optional module instead risked a re-source resetting one
+# after another module had already overridden it.
+_tuish_resolve_event ()      { :; }        # hid.sh
+_tuish_viewport_on_resize () { :; }        # viewport.sh
+tuish_dispatch ()            { return 1; } # keybind.sh
+_tuish_hid_fini ()           { :; }        # hid.sh (mouse/kitty teardown)
+
 TUISH_EVENT=''
 TUISH_EVENT_KIND=''
 TUISH_MOUSE_X=0
@@ -146,8 +163,11 @@ TUISH_TABSIZE="${TUISH_TABSIZE:-4}"
 TUISH_FINI_OFFSET="${TUISH_FINI_OFFSET:-0}"
 TUISH_MOUSE_ABS_Y=0
 
-# ─── Viewport defaults ───────────────────────────────────────────
-# TUISH_VIEW_TOP=1 so tuish_vmove works even without viewport.sh.
+# ─── Viewport defaults (ABI seam) ────────────────────────────────
+# TUISH_VIEW_TOP / TUISH_VIEW_COLS / _tuish_view_mode are read by term.sh
+# (vmove, draw clipping), event.sh and hid.sh on hot paths, so they default
+# here and must exist even when viewport.sh is not sourced. viewport.sh updates
+# them; _tuish_on_fini is its teardown hook.
 
 TUISH_VIEW_MODE=''
 TUISH_VIEW_ROWS=0
@@ -405,13 +425,7 @@ tuish_fini ()
 
 	# Restore terminal
 	tuish_reset_scroll
-	if test $_tuish_mouse -eq 1
-	then
-		_tuish_write '\033[?1006l'   # SGR mouse off
-		_tuish_write '\033[?1003l'   # any event tracking off
-		_tuish_write '\033[?1002l'   # button event tracking off
-		_tuish_mouse=0
-	fi
+	_tuish_hid_fini              # hid.sh: disable mouse tracking if it was on
 	_tuish_write '\033[?1004l'   # focus events off
 	_tuish_write '\033[777l'
 	_tuish_write '\033[?2004l'   # bracketed paste off

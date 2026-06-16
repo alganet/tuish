@@ -19,7 +19,17 @@
 # _tuish_kitty_raw, _tuish_mouse, _tuish_detailed, _tuish_modkeys,
 # _tuish_wrap are initialized in tui.sh (HID state defaults).
 
+if test -n "${_tuish_hid_loaded:-}"; then return 0; fi
+_tuish_hid_loaded=1
+
 _tuish_held=''
+
+# Teardown hook called by tuish_fini (stubbed in tui.sh): turn off mouse
+# tracking if it was on, so fini need not read HID-private state directly.
+_tuish_hid_fini ()
+{
+	if test $_tuish_mouse -eq 1; then tuish_mouse_off; fi
+}
 
 # ─── Keyboard protocol ──────────────────────────────────────────
 

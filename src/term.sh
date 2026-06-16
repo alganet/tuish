@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: ISC
 
+# Load guard: skip re-definition if already sourced (see tui.sh).
+if test -n "${_tuish_term_loaded:-}"; then return 0; fi
+_tuish_term_loaded=1
 # src/term.sh - Terminal output and drawing primitives
 # Optional module. Source after tui.sh.
 #
