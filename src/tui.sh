@@ -29,6 +29,7 @@
 #   TUISH_INIT_ROW         - cursor row when init was called
 #   TUISH_PROTOCOL         - keyboard protocol: "vt" or "kitty"
 #   TUISH_TIMING           - timeout resolution: "sub" or "second"
+#   TUISH_TICK_US          - idle interval in microseconds (for time-based animation)
 #
 # Configuration (set before tuish_init):
 #   TUISH_TABSIZE          - tab stop interval (default: 4)
@@ -151,6 +152,25 @@ tuish_update_size ()
 	TUISH_COLUMNS="${_ts#* }"
 }
 
+# ─── Timeout parsing ─────────────────────────────────────────────────
+# _tuish_timeout_us TIMEOUT -> _tuish_tick_us
+# Convert a seconds timeout string ("0.02", "0.26", "1", "0.5") to integer
+# microseconds. The single parser behind both TUISH_TICK_US (animation clock)
+# and the zsh idle-chunk count. Fractional part is read to 6 digits (µs); the
+# whole and fraction are forced base-10 (10#) so leading-zero fractions like
+# "020" are not misread as octal. Zero/empty falls back to ~60 Hz.
+_tuish_timeout_us ()
+{
+	case "$1" in
+		*.*) local _w="${1%.*}" _f="${1#*.}000000"
+		     _f="${_f%"${_f#??????}"}"
+		     _tuish_tick_us=$(( ${_w:-0} * 1000000 + 10#$_f ));;
+		*)   _tuish_tick_us=$(( ${1:-0} * 1000000 ));;
+	esac
+	test "$_tuish_tick_us" -le 0 && _tuish_tick_us=16667
+	return 0
+}
+
 # ─── Lifecycle ──────────────────────────────────────────────────────
 
 tuish_init ()
@@ -239,11 +259,18 @@ _tuish_heredoc
 
 	_tuish_esc_timeout='-t0.02'
 	_tuish_idle_timeout="-t${TUISH_IDLE_TIMEOUT:-0.26}"
+	_tuish_idle_default='0.26'
 	if test "$TUISH_TIMING" = 'second'
 	then
 		_tuish_esc_timeout='-t1'
 		_tuish_idle_timeout="-t${TUISH_IDLE_TIMEOUT:-1}"
+		_tuish_idle_default='1'
 	fi
+
+	# The idle interval in microseconds: the wall-time one idle tick spans, for
+	# time-based animation. Single source for the zsh idle-chunk math below.
+	_tuish_timeout_us "${TUISH_IDLE_TIMEOUT:-$_tuish_idle_default}"
+	TUISH_TICK_US=$_tuish_tick_us
 
 	# Chunked idle wait (zsh): poll in slices of at most 30ms up to the full
 	# idle timeout, so the idle interval tracks TUISH_IDLE_TIMEOUT. One read of
@@ -253,13 +280,7 @@ _tuish_heredoc
 	_tuish_idle_chunks=1
 	if test "$TUISH_TIMING" != 'second'
 	then
-		_it="${TUISH_IDLE_TIMEOUT:-0.26}"
-		case "$_it" in
-			*.*) _itw="${_it%.*}" _itf="${_it#*.}000"
-			     _itf="${_itf%"${_itf#???}"}"
-			     _itms=$(( ${_itw:-0} * 1000 + 10#$_itf ));;
-			*)   _itms=$(( _it * 1000 ));;
-		esac
+		_itms=$(( TUISH_TICK_US / 1000 ))
 		if test "$_itms" -gt 30
 		then
 			_tuish_idle_chunk='-t0.03'
