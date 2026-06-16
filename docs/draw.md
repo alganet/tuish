@@ -74,8 +74,11 @@ tuish_draw_fill 1 1 20 5 4         # positional (same result)
 ### tuish_draw_text ROW COL TEXT [maxwidth=N] [fg=N] [bg=N]
 
 Render text at a position with optional foreground/background color and
-width clipping. Respects viewport transform and clip region. Text that
-extends past the right edge of the viewport is automatically truncated.
+width clipping. Respects the draw-layer transform (origin offset + clip
+region), then delegates placement, color, and edge clipping to
+[`tuish_text`](term.md). Text that extends past the right edge of the
+viewport is automatically truncated. With the canvas off and no draw origin
+set, prefer `tuish_text` directly.
 
 ```sh
 tuish_draw_text 1 1 "Hello, world!"

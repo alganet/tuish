@@ -44,11 +44,31 @@ screen clearing, and scroll regions. Source after `tui.sh`.
 
 ## Output
 
-| Function                      | Description                                                                         |
-|-------------------------------|-------------------------------------------------------------------------------------|
-| `tuish_print TEXT`            | Print text at cursor position (backslashes and `%` signs are escaped automatically) |
-| `tuish_print_at ROW COL TEXT` | Viewport-relative move + print (convenience)                                        |
-| `tuish_newline`               | Output newline + carriage return                                                    |
+| Function                                       | Description                                                                         |
+|------------------------------------------------|-------------------------------------------------------------------------------------|
+| `tuish_print TEXT`                             | Print text at cursor position (backslashes and `%` signs are escaped automatically) |
+| `tuish_text ROW COL TEXT [fg= bg= maxwidth=]`  | Viewport/canvas-relative move + colored, width-clipped print (see below)             |
+| `tuish_print_at ROW COL TEXT`                  | Convenience alias for `tuish_text ROW COL TEXT` (no color/width options)             |
+| `tuish_newline`                                | Output newline + carriage return                                                    |
+
+### tuish_text ROW COL TEXT [fg=N] [bg=N] [maxwidth=N]
+
+The single text-placement entry point. Moves to viewport- (or canvas-) relative
+`(ROW, COL)` and prints `TEXT`, optionally colored (`fg=`/`bg=`, same color forms
+as `tuish_fg`) and width-limited (`maxwidth=`). It honors the active canvas
+transform and trims text to the display width that fits within `TUISH_VIEW_COLS`
+(including trimming leading cells when `COL` falls left of column 1). SGR is reset
+only when a color was applied, so the plain `tuish_text R C "x"` form is a pure
+place-and-print.
+
+Width-aware clipping (`maxwidth=` and edge trimming) requires `str.sh`; in the
+minimal profile without it, `tuish_text` still places and colors the text and lets
+the terminal clip at the screen edge.
+
+```sh
+tuish_text 3 5 "Hello"                       # plain placement
+tuish_text 1 1 "$status" fg=2 maxwidth=20    # green, clipped to 20 display columns
+```
 
 ## Erase
 

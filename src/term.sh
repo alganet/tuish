@@ -56,7 +56,83 @@ tuish_print ()
 	test $_tuish_printf -eq 1 && case "$_p" in *%*) _p="${_p//\%/%%}";; esac
 	_tuish_write "$_p"
 }
-tuish_print_at ()       { if tuish_vmove "$1" "$2"; then tuish_print "$3"; fi; }
+# tuish_text ROW COL TEXT [fg=N] [bg=N] [maxwidth=N]
+# The single text-placement entry point. Positions at viewport/canvas (ROW,COL)
+# via tuish_vmove and prints TEXT, optionally coloured and width-clipped. Works
+# in the minimal, str.sh-less profile (placement + colour only, letting the
+# terminal clip at the screen edge); when str.sh is sourced it additionally
+# honours maxwidth and trims to the display width that fits within
+# TUISH_VIEW_COLS — including trimming leading cells when COL lands left of
+# column 1 (e.g. under panning). Resets SGR only when it applied a colour, so
+# the plain form stays a pure place-and-print.
+tuish_text ()
+{
+	local _tt_row=$1 _tt_col=$2 _tt_text="$3" _tt_maxw=-1 _tt_fg=-1 _tt_bg=-1
+	shift 3
+	while test $# -gt 0
+	do
+		case "$1" in
+			maxwidth=*) _tt_maxw="${1#*=}";;
+			fg=*)       _tt_fg="${1#*=}";;
+			bg=*)       _tt_bg="${1#*=}";;
+		esac
+		shift
+	done
+
+	# Display-width clipping needs str.sh; without it, place + colour verbatim
+	# and let the terminal clip at the screen edge.
+	if type tuish_str_width >/dev/null 2>&1
+	then
+		# Whole placement off the right of the viewport: nothing to draw.
+		if test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0 \
+		   && test $_tt_col -gt $TUISH_VIEW_COLS
+		then return 0; fi
+
+		# str helpers take a variable NAME — pass _tt_text directly.
+		tuish_str_width _tt_text
+		local _tt_w=$TUISH_SWIDTH
+
+		if test $_tt_maxw -ge 0 && test $_tt_w -gt $_tt_maxw
+		then
+			tuish_str_left _tt_text $_tt_maxw
+			_tt_text=$TUISH_SLEFT
+			_tt_w=$_tt_maxw
+		fi
+
+		# Left-edge clip: trim leading characters when COL < 1.
+		if test $_tt_col -lt 1
+		then
+			tuish_str_right _tt_text $((1 - _tt_col))
+			_tt_text=$TUISH_SRIGHT
+			_tt_col=1
+			tuish_str_width _tt_text
+			_tt_w=$TUISH_SWIDTH
+		fi
+
+		# Right-edge clip: trim to the columns that fit.
+		if test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0
+		then
+			local _tt_avail=$((TUISH_VIEW_COLS - _tt_col + 1))
+			if test $_tt_w -gt $_tt_avail
+			then
+				tuish_str_left _tt_text $_tt_avail
+				_tt_text=$TUISH_SLEFT
+			fi
+		fi
+
+		test -z "$_tt_text" && return 0
+	fi
+
+	if tuish_vmove $_tt_row $_tt_col
+	then
+		test "$_tt_fg" != -1 && { _tuish_color_params fg "$_tt_fg"; tuish_sgr "$_tuish_cparams"; }
+		test "$_tt_bg" != -1 && { _tuish_color_params bg "$_tt_bg"; tuish_sgr "$_tuish_cparams"; }
+		tuish_print "$_tt_text"
+	fi
+	if test "$_tt_fg" != -1 || test "$_tt_bg" != -1
+	then tuish_sgr_reset; fi
+}
+tuish_print_at ()       { tuish_text "$1" "$2" "$3"; }
 # Raw-write analog of tuish_print_at: position then emit TEXT verbatim, skipping
 # the write (and emitting nothing) when the cell is clipped off-screen. Lets the
 # draw primitives share one clip-guarded write instead of hand-copying the

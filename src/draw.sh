@@ -762,73 +762,22 @@ tuish_draw_tee ()
 # ─── Text rendering ─────────────────────────────────────────────
 
 # tuish_draw_text ROW COL TEXT [maxwidth=N] [fg=N] [bg=N]
-# Render text at (ROW,COL) with optional color and width clipping.
-# Respects viewport transform and clip region.
+# Render text at (ROW,COL) with optional color and width clipping. Applies the
+# draw-layer transform (origin offset + vertical clip region), then delegates
+# placement, colour, maxwidth, and column/edge clipping to term.sh's tuish_text.
 tuish_draw_text ()
 {
-	local _dt_row=$1 _dt_col=$2 _dt_text="$3" _dt_maxw=-1 _dt_fg=-1 _dt_bg=-1
+	local _dt_row=$1 _dt_col=$2 _dt_text="$3"
 	shift 3
-	while test $# -gt 0; do
-		case "$1" in
-			maxwidth=*) _dt_maxw="${1#*=}";;
-			fg=*)       _dt_fg="${1#*=}";;
-			bg=*)       _dt_bg="${1#*=}";;
-		esac
-		shift
-	done
 
-	# Viewport transform (inline for left-edge clipping)
 	local _dt_tr=$((_dt_row - _tuish_draw_origin_r))
 	local _dt_tc=$((_dt_col - _tuish_draw_origin_c))
 	if test $_tuish_draw_clip -eq 1; then
 		test $_dt_tr -lt $_tuish_draw_clip_top && return 0
 		test $_dt_tr -gt $_tuish_draw_clip_bot && return 0
 	fi
-	# Right-edge cull
-	test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0 \
-		&& test $_dt_tc -gt $TUISH_VIEW_COLS && return 0
 
-	# Measure text width (str helpers take the variable NAME, so pass _dt_text
-	# directly — an extra indirection here would measure/slice the name itself).
-	tuish_str_width _dt_text
-	local _dt_tw=$TUISH_SWIDTH
-
-	# Apply maxwidth clipping
-	if test $_dt_maxw -ge 0 && test $_dt_tw -gt $_dt_maxw; then
-		tuish_str_left _dt_text $_dt_maxw
-		_dt_text=$TUISH_SLEFT
-		_dt_tw=$_dt_maxw
-	fi
-
-	# Left-edge clipping: trim leading characters
-	if test $_dt_tc -lt 1; then
-		local _dt_skip=$((1 - _dt_tc))
-		tuish_str_right _dt_text $_dt_skip
-		_dt_text=$TUISH_SRIGHT
-		_dt_tc=1
-		tuish_str_width _dt_text
-		_dt_tw=$TUISH_SWIDTH
-	fi
-
-	# Right-edge clipping
-	if test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0; then
-		local _dt_avail=$((TUISH_VIEW_COLS - _dt_tc + 1))
-		if test $_dt_tw -gt $_dt_avail; then
-			tuish_str_left _dt_text $_dt_avail
-			_dt_text=$TUISH_SLEFT
-		fi
-	fi
-
-	# Nothing to print after clipping
-	test -z "$_dt_text" && return 0
-
-	if tuish_vmove $_dt_tr $_dt_tc
-	then
-		_tuish_draw_set_fg $_dt_fg
-		_tuish_draw_set_bg $_dt_bg
-		tuish_print "$_dt_text"
-	fi
-	tuish_sgr_reset
+	tuish_text $_dt_tr $_dt_tc "$_dt_text" "$@"
 }
 
 # tuish_draw_centered ROW TEXT [col=N] [width=N] [fg=N] [bg=N]
