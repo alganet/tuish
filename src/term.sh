@@ -27,7 +27,32 @@
 tuish_move ()           { _tuish_cursor_abs_row=$1; _tuish_clipped=0; _tuish_write "\033[${1};${2}H"; }
 tuish_vmove ()
 {
-	local _abs=$((TUISH_VIEW_TOP + $1 - 1))
+	if test $_tuish_canvas_on -eq 0
+	then
+		# Hot path (no canvas): viewport translate + bottom clip, unchanged.
+		local _abs=$((TUISH_VIEW_TOP + $1 - 1))
+		if test $_abs -gt $TUISH_LINES
+		then
+			_tuish_clipped=1
+			return 1
+		fi
+		_tuish_cursor_abs_row=$_abs
+		_tuish_clipped=0
+		_tuish_write "\033[$_tuish_cursor_abs_row;${2}H"
+		return 0
+	fi
+	# Canvas active: $1/$2 are canvas-local CELL coords (1-based). Clip to the
+	# canvas bounds (all four edges), then scale by the cell size and offset to
+	# an absolute terminal position. Column clipping is by start cell; with
+	# CW>1 content is assumed cell-aligned (one glyph per cell).
+	if test $1 -lt 1 || test $1 -gt $TUISH_CANVAS_H \
+	   || test $2 -lt 1 || test $2 -gt $TUISH_CANVAS_W
+	then
+		_tuish_clipped=1
+		return 1
+	fi
+	local _abs=$((_tuish_canvas_row0 + ($1 - 1) * _tuish_canvas_ch + 1))
+	local _col=$((_tuish_canvas_col0 + ($2 - 1) * _tuish_canvas_cw + 1))
 	if test $_abs -gt $TUISH_LINES
 	then
 		_tuish_clipped=1
@@ -35,7 +60,8 @@ tuish_vmove ()
 	fi
 	_tuish_cursor_abs_row=$_abs
 	_tuish_clipped=0
-	_tuish_write "\033[$_tuish_cursor_abs_row;${2}H"
+	_tuish_write "\033[$_abs;${_col}H"
+	return 0
 }
 tuish_print ()
 {

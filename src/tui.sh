@@ -142,6 +142,25 @@ _tuish_view_mode=''
 _tuish_fini_push_gap=0
 _tuish_on_fini () { :; }
 
+# ─── Canvas defaults ─────────────────────────────────────────────
+# A canvas is a bounded sub-region of the viewport (see canvas.sh).
+# _tuish_canvas_on=0 keeps tuish_vmove's canvas branch inert — and the
+# no-canvas hot path a single compare — even when canvas.sh is not sourced.
+
+TUISH_CANVAS=0
+TUISH_CANVAS_W=0
+TUISH_CANVAS_H=0
+TUISH_CANVAS_CW=1
+TUISH_CANVAS_CH=1
+
+_tuish_canvas_on=0
+_tuish_canvas_r=1
+_tuish_canvas_c=1
+_tuish_canvas_row0=0
+_tuish_canvas_col0=0
+_tuish_canvas_cw=1
+_tuish_canvas_ch=1
+
 # ─── Size management ────────────────────────────────────────────────
 
 tuish_update_size ()
