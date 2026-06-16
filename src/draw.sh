@@ -592,7 +592,7 @@ tuish_draw_hdiv ()
 	test $_clip_l -eq 0 && _out=$_tuish_draw_ch_tee_r
 	_out="${_out}${TUISH_SREPEATED}"
 	test $_clip_r -eq 0 && _out="${_out}${_tuish_draw_ch_tee_l}"
-	if tuish_vmove $_row $_col; then _tuish_write "$_out"; fi
+	_tuish_write_at $_row $_col "$_out"
 	tuish_sgr_reset
 }
 
@@ -727,7 +727,7 @@ tuish_draw_cross ()
 	_tuish_draw_set_fg $_tuish_draw_opt_fg
 	test $_tuish_draw_ch_bold -eq 1 && tuish_bold
 
-	if tuish_vmove $_row $_col; then _tuish_write "$_tuish_draw_ch_cross"; fi
+	_tuish_write_at $_row $_col "$_tuish_draw_ch_cross"
 	tuish_sgr_reset
 }
 
@@ -748,15 +748,14 @@ tuish_draw_tee ()
 	_tuish_draw_set_fg $_tuish_draw_opt_fg
 	test $_tuish_draw_ch_bold -eq 1 && tuish_bold
 
-	if tuish_vmove $_row $_col
-	then
-		case "$_dir" in
-			r) _tuish_write "$_tuish_draw_ch_tee_r";;
-			l) _tuish_write "$_tuish_draw_ch_tee_l";;
-			d) _tuish_write "$_tuish_draw_ch_tee_d";;
-			u) _tuish_write "$_tuish_draw_ch_tee_u";;
-		esac
-	fi
+	local _tee=''
+	case "$_dir" in
+		r) _tee=$_tuish_draw_ch_tee_r;;
+		l) _tee=$_tuish_draw_ch_tee_l;;
+		d) _tee=$_tuish_draw_ch_tee_d;;
+		u) _tee=$_tuish_draw_ch_tee_u;;
+	esac
+	_tuish_write_at $_row $_col "$_tee"
 	tuish_sgr_reset
 }
 

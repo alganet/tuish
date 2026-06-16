@@ -57,6 +57,11 @@ tuish_print ()
 	_tuish_write "$_p"
 }
 tuish_print_at ()       { if tuish_vmove "$1" "$2"; then tuish_print "$3"; fi; }
+# Raw-write analog of tuish_print_at: position then emit TEXT verbatim, skipping
+# the write (and emitting nothing) when the cell is clipped off-screen. Lets the
+# draw primitives share one clip-guarded write instead of hand-copying the
+# `if tuish_vmove …; then _tuish_write …; fi` idiom at each single-write site.
+_tuish_write_at ()      { if tuish_vmove "$1" "$2"; then _tuish_write "$3"; fi; }
 tuish_clear_line ()     { _tuish_write '\033[2K'; }
 tuish_clear_to_eol ()   { _tuish_write '\033[K'; }
 tuish_clear_screen ()   { _tuish_write '\033[2J'; }
