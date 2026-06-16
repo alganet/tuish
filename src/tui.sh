@@ -178,11 +178,31 @@ _tuish_view_mode=''
 _tuish_fini_push_gap=0
 _tuish_on_fini () { :; }
 
-# ─── Canvas defaults ─────────────────────────────────────────────
-# A canvas is a bounded sub-region of the viewport (see canvas.sh).
-# _tuish_canvas_on=0 keeps tuish_vmove's canvas branch inert — and the
-# no-canvas hot path a single compare — even when canvas.sh is not sourced.
+# ─── Transform state (the tuish_vmove origin/scale/clip) ─────────
+# tuish_vmove maps a logical (row,col) onto an absolute terminal cell through a
+# single affine+clip transform. The default below is the viewport identity: no
+# column shift, unit cells, and a clip only at the physical bottom. canvas.sh
+# overwrites _tx_* to address a bounded sub-region (4-edge clipped, optionally
+# CWxCH-scaled). The row origin folds in TUISH_VIEW_TOP live (read in vmove), so
+# the transform survives a resize.
 
+_tx_off_r=0
+_tx_off_c=0
+_tx_ch=1
+_tx_cw=1
+_tx_lrmin=-99999
+_tx_lrmax=99999
+_tx_lcmin=-99999
+_tx_lcmax=99999
+
+# Reset the transform to the viewport identity (canvas off).
+_tuish_tx_reset ()
+{
+	_tx_off_r=0; _tx_off_c=0; _tx_ch=1; _tx_cw=1
+	_tx_lrmin=-99999; _tx_lrmax=99999; _tx_lcmin=-99999; _tx_lcmax=99999
+}
+
+# ─── Canvas state (public flags; geometry lives in _tx_* above) ──
 TUISH_CANVAS=0
 TUISH_CANVAS_W=0
 TUISH_CANVAS_H=0
@@ -192,10 +212,6 @@ TUISH_CANVAS_CH=1
 _tuish_canvas_on=0
 _tuish_canvas_r=1
 _tuish_canvas_c=1
-_tuish_canvas_row0=0
-_tuish_canvas_col0=0
-_tuish_canvas_cw=1
-_tuish_canvas_ch=1
 
 # ─── Size management ────────────────────────────────────────────────
 

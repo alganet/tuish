@@ -39,17 +39,20 @@ tuish_canvas ()
 {
 	_tuish_canvas_r=$1
 	_tuish_canvas_c=$2
-	_tuish_canvas_cw=${5:-1}
-	_tuish_canvas_ch=${6:-1}
 	TUISH_CANVAS_W=$3
 	TUISH_CANVAS_H=$4
-	TUISH_CANVAS_CW=$_tuish_canvas_cw
-	TUISH_CANVAS_CH=$_tuish_canvas_ch
-	# Precompute the origin so vmove only ever ADDS it (never multiplies by it):
-	#   abs_row  = row0 + (LR-1)*CH + 1   (folds in TUISH_VIEW_TOP)
-	#   term_col = col0 + (LC-1)*CW + 1   (columns are not viewport-translated)
-	_tuish_canvas_row0=$(( TUISH_VIEW_TOP + $1 - 2 ))
-	_tuish_canvas_col0=$(( $2 - 1 ))
+	TUISH_CANVAS_CW=${5:-1}
+	TUISH_CANVAS_CH=${6:-1}
+	# Configure the vmove transform: origin relative to the live viewport top,
+	# CWxCH cell scale, and a 4-edge clip to the canvas's W x H cells.
+	_tx_off_r=$(( $1 - 1 ))
+	_tx_off_c=$(( $2 - 1 ))
+	_tx_ch=$TUISH_CANVAS_CH
+	_tx_cw=$TUISH_CANVAS_CW
+	_tx_lrmin=1
+	_tx_lrmax=$4
+	_tx_lcmin=1
+	_tx_lcmax=$3
 	_tuish_canvas_on=1
 	TUISH_CANVAS=1
 }
@@ -57,6 +60,7 @@ tuish_canvas ()
 # Deactivate the canvas; subsequent moves use plain viewport coordinates.
 tuish_canvas_off ()
 {
+	_tuish_tx_reset
 	_tuish_canvas_on=0
 	TUISH_CANVAS=0
 }
@@ -66,12 +70,11 @@ tuish_canvas_off ()
 # outside the canvas (and the rest of the screen) untouched.
 tuish_canvas_clear ()
 {
-	local _cc_w=$(( TUISH_CANVAS_W * _tuish_canvas_cw ))
-	local _cc_h=$(( TUISH_CANVAS_H * _tuish_canvas_ch ))
-	local _cc_save=$_tuish_canvas_on
-	# Clear in plain viewport coords (canvas off) so the region is not re-scaled.
-	# The canvas top-left R,C are already viewport-relative, so use them directly.
-	_tuish_canvas_on=0
+	local _cc_w=$(( TUISH_CANVAS_W * TUISH_CANVAS_CW ))
+	local _cc_h=$(( TUISH_CANVAS_H * TUISH_CANVAS_CH ))
+	# Clear in plain viewport coords (transform reset) so the region is not
+	# re-scaled — R,C are already viewport-relative — then restore the canvas.
+	_tuish_tx_reset
 	tuish_clear_region "$_tuish_canvas_r" "$_tuish_canvas_c" "$_cc_w" "$_cc_h"
-	_tuish_canvas_on=$_cc_save
+	tuish_canvas "$_tuish_canvas_r" "$_tuish_canvas_c" "$TUISH_CANVAS_W" "$TUISH_CANVAS_H" "$TUISH_CANVAS_CW" "$TUISH_CANVAS_CH"
 }
