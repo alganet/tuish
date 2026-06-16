@@ -11,6 +11,31 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    name: lint (sh -n)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shells
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh ksh mksh busybox
+
+      - name: Syntax-check every script under all shells
+        run: |
+          status=0
+          for shell in bash zsh ksh mksh 'busybox sh'; do
+            echo "=== $shell -n ==="
+            # -n1: sh -n reads only its FIRST file arg (the rest become $1, $2…),
+            # so each script must be checked individually.
+            find src examples -name '*.sh' -print0 \
+              | xargs -0 -n1 $shell -n || status=1
+          done
+          exit $status
+
   test:
     runs-on: ubuntu-latest
 
