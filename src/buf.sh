@@ -32,10 +32,9 @@ tuish_buf_count ()
 tuish_buf_get ()
 {
 	if test $# -gt 1
-	then eval "_tuish_bline=\"\$_tuish_buf_${1}_$2\""
-	else eval "_tuish_bline=\"\$_tuish_buf_$1\""
+	then eval "TUISH_BLINE=\"\$_tuish_buf_${1}_$2\""
+	else eval "TUISH_BLINE=\"\$_tuish_buf_$1\""
 	fi
-	TUISH_BLINE=$_tuish_bline
 }
 
 tuish_buf_set ()

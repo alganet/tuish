@@ -502,16 +502,16 @@ _tuish_draw_box_impl ()
 	local _inner=$((_w))
 	test $_clip_l -eq 0 && _inner=$((_inner - 1))
 	test $_clip_r -eq 0 && _inner=$((_inner - 1))
-	_tuish_str_repeat "$_tuish_draw_ch_h" $_inner
-	local _hline=$_tuish_srepeated
+	tuish_str_repeat "$_tuish_draw_ch_h" $_inner
+	local _hline=$TUISH_SREPEATED
 
 	# Build interior fill
 	local _fill_w=$_w
 	test $_bl -eq 1 && _fill_w=$((_fill_w - 1))
 	test $_br -eq 1 && _fill_w=$((_fill_w - 1))
 	test $_fill_w -lt 0 && _fill_w=0
-	_tuish_str_repeat ' ' $_fill_w
-	local _fill=$_tuish_srepeated
+	tuish_str_repeat ' ' $_fill_w
+	local _fill=$TUISH_SREPEATED
 
 	# Set colors
 	_tuish_draw_set_colors $_fg $_bg
@@ -727,10 +727,10 @@ tuish_draw_hdiv ()
 	test $_clip_l -eq 0 && _inner=$((_inner - 1))
 	test $_clip_r -eq 0 && _inner=$((_inner - 1))
 	test $_inner -lt 0 && _inner=0
-	_tuish_str_repeat "$_tuish_draw_ch_h" $_inner
+	tuish_str_repeat "$_tuish_draw_ch_h" $_inner
 	local _out=''
 	test $_clip_l -eq 0 && _out=$_tuish_draw_ch_tee_r
-	_out="${_out}${_tuish_srepeated}"
+	_out="${_out}${TUISH_SREPEATED}"
 	test $_clip_r -eq 0 && _out="${_out}${_tuish_draw_ch_tee_l}"
 	_tuish_write "$_out"
 	_tuish_clipped=0; tuish_sgr_reset
@@ -817,8 +817,8 @@ tuish_draw_hline ()
 	test $_tuish_draw_ch_bold -eq 1 && tuish_bold
 
 	tuish_vmove $_row $_col || :
-	_tuish_str_repeat "$_tuish_draw_ch_h" $_w
-	_tuish_write "$_tuish_srepeated"
+	tuish_str_repeat "$_tuish_draw_ch_h" $_w
+	_tuish_write "$TUISH_SREPEATED"
 	_tuish_clipped=0; tuish_sgr_reset
 }
 

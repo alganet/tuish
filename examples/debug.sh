@@ -59,7 +59,7 @@ _dbg_format_event ()
 					local _ch="${TUISH_EVENT#char }"
 					test "$_ch" = 'bslash' && _ch='\'
 					tuish_str_width _ch
-					_dbg_left="${_dbg_left} (w:${_tuish_swidth})"
+					_dbg_left="${_dbg_left} (w:${TUISH_SWIDTH})"
 					;;
 			esac
 			;;

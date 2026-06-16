@@ -78,13 +78,13 @@ _w_add_test ()
 	# Pre-pad label
 	local _lab="$1"
 	tuish_str_width _lab
-	_w_pad_to "$1" $_w_col1 $_tuish_swidth
+	_w_pad_to "$1" $_w_col1 $TUISH_SWIDTH
 	eval "_w_tlab_${_w_n}=\"\$_w_padded\""
 
 	# Pre-pad text and record actual width
 	local _txt="$2"
 	tuish_str_width _txt
-	local _actual=$_tuish_swidth
+	local _actual=$TUISH_SWIDTH
 	eval "_w_tactual_${_w_n}=$_actual"
 	eval "_w_texpect_${_w_n}=$3"
 	_w_pad_to "$2" $_w_col2 $_actual

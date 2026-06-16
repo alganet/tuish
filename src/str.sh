@@ -20,37 +20,34 @@
 # ─── String utilities (byte-mode UTF-8 decoding) ─────────────────
 # All take a variable NAME to avoid subshell overhead.
 # Results in TUISH_SLEN, TUISH_SLEFT, TUISH_SRIGHT, TUISH_SCHAR.
-# Legacy aliases: _tuish_slen, _tuish_sleft, _tuish_sright, _tuish_schar.
 
 tuish_str_len ()
 {
 	eval "local _sl_str=\"\${$1}\""
 	# Fast path: printable ASCII → byte count = char count
 	case "$_sl_str" in *[![:print:]]*)
-		local _sl_i=0
-		_tuish_slen=0
+		local _sl_i=0 _sl_n=0
 		while _tuish_byte_val "$1" $_sl_i
 		do
 			_tuish_utf8_len $_tuish_bval
 			_sl_i=$((_sl_i + _tuish_cbytes))
-			_tuish_slen=$((_tuish_slen + 1))
+			_sl_n=$((_sl_n + 1))
 		done
-		TUISH_SLEN=$_tuish_slen
+		TUISH_SLEN=$_sl_n
 		return;;
 	esac
-	_tuish_slen=${#_sl_str}
-	TUISH_SLEN=$_tuish_slen
+	TUISH_SLEN=${#_sl_str}
 }
 
 tuish_str_left ()
 {
 	# Fast path: if first $2 bytes are printable ASCII, byte off = char off
-	eval "_tuish_sleft=\"\${$1:0:$2}\""
-	case "$_tuish_sleft" in *[![:print:]]*)
+	eval "local _sl_v=\"\${$1:0:$2}\""
+	case "$_sl_v" in *[![:print:]]*)
 		_tuish_char_byte_off "$1" "$2"
-		eval "_tuish_sleft=\"\${$1:0:$_tuish_boff}\"";;
+		eval "_sl_v=\"\${$1:0:$_tuish_boff}\"";;
 	esac
-	TUISH_SLEFT=$_tuish_sleft
+	TUISH_SLEFT=$_sl_v
 }
 
 tuish_str_right ()
@@ -59,12 +56,10 @@ tuish_str_right ()
 	eval "local _sr_pre=\"\${$1:0:$2}\""
 	case "$_sr_pre" in *[![:print:]]*)
 		_tuish_char_byte_off "$1" "$2"
-		eval "_tuish_sright=\"\${$1:$_tuish_boff}\""
-		TUISH_SRIGHT=$_tuish_sright
+		eval "TUISH_SRIGHT=\"\${$1:$_tuish_boff}\""
 		return;;
 	esac
-	eval "_tuish_sright=\"\${$1:$2}\""
-	TUISH_SRIGHT=$_tuish_sright
+	eval "TUISH_SRIGHT=\"\${$1:$2}\""
 }
 
 tuish_str_char ()
@@ -73,25 +68,21 @@ tuish_str_char ()
 	eval "local _sc_pre=\"\${$1:0:$(($2 + 1))}\""
 	case "$_sc_pre" in *[![:print:]]*)
 		_tuish_char_byte_off "$1" "$2"
-		_tuish_byte_val "$1" $_tuish_boff || { _tuish_schar=''; TUISH_SCHAR=''; return; }
+		_tuish_byte_val "$1" $_tuish_boff || { TUISH_SCHAR=''; return; }
 		_tuish_utf8_len $_tuish_bval
-		eval "_tuish_schar=\"\${$1:$_tuish_boff:$_tuish_cbytes}\""
-		TUISH_SCHAR=$_tuish_schar
+		eval "TUISH_SCHAR=\"\${$1:$_tuish_boff:$_tuish_cbytes}\""
 		return;;
 	esac
-	eval "_tuish_schar=\"\${$1:$2:1}\""
-	TUISH_SCHAR=$_tuish_schar
+	eval "TUISH_SCHAR=\"\${$1:$2:1}\""
 }
 
 # Repeat string $1 exactly $2 times. O(log n) via doubling.
-# Result in TUISH_SREPEATED (legacy: _tuish_srepeated).
-_tuish_str_repeat ()
+# Result in TUISH_SREPEATED.
+tuish_str_repeat ()
 {
 	_tuish_repeat "$1" "$2"
-	_tuish_srepeated=$_tuish_rep
 	TUISH_SREPEATED=$_tuish_rep
 }
-tuish_str_repeat () { _tuish_str_repeat "$@"; }
 
 # ─── Text width (display columns) ────────────────────────────────
 # UTF-8 decode → codepoint → width classification.
@@ -103,15 +94,14 @@ tuish_str_width ()
 	local _sw_len=${#_sw_str}
 	# Fast path: under LC_ALL=C, [:print:] is exactly 0x20-0x7E.
 	# All printable ASCII chars have width 1, so width = byte count.
-	case "$_sw_str" in *[![:print:]]*) ;; *) _tuish_swidth=$_sw_len; TUISH_SWIDTH=$_sw_len; return;; esac
+	case "$_sw_str" in *[![:print:]]*) ;; *) TUISH_SWIDTH=$_sw_len; return;; esac
 	# Slow path: decode UTF-8 inline over the local value. Working on the
 	# value (not a variable name) lets us read bytes with direct
 	# ${_sw_str:i:1} substrings, avoiding per-byte eval/indirection — the
 	# reason the decode is inlined here (and in tuish_str_window) rather than
 	# factored into a shared helper, which would need a per-char eval or string
 	# copy. _tuish_ord returns unsigned 1-255 (ord.sh), so no signed correction.
-	local _sw_i=0 _sw_b0 _sw_b1 _sw_b2 _sw_cp
-	_tuish_swidth=0
+	local _sw_i=0 _sw_b0 _sw_b1 _sw_b2 _sw_cp _sw_w=0
 	while test $_sw_i -lt $_sw_len
 	do
 		_tuish_ord "${_sw_str:$_sw_i:1}"
@@ -150,13 +140,13 @@ tuish_str_width ()
 			_sw_i=$((_sw_i + 1))
 		fi
 		_tuish_char_width $_sw_cp
-		_tuish_swidth=$((_tuish_swidth + _tuish_cw))
+		_sw_w=$((_sw_w + _tuish_cw))
 	done
-	TUISH_SWIDTH=$_tuish_swidth
+	TUISH_SWIDTH=$_sw_w
 }
 
 # ─── Horizontal window (display columns) ─────────────────────────
-# tuish_str_window VAR OFFSET WIDTH -> TUISH_SWINDOW (legacy: _tuish_swindow)
+# tuish_str_window VAR OFFSET WIDTH -> TUISH_SWINDOW
 #
 # The slice of VAR visible in a horizontal window OFFSET columns from the left,
 # WIDTH columns wide — i.e. the characters occupying display columns
@@ -174,15 +164,13 @@ tuish_str_window ()
 	# Fast path: all printable ASCII → every char is width 1, so display column
 	# == byte offset and the window is a plain substring.
 	case "$_wn_str" in *[![:print:]]*) ;; *)
-		_tuish_swindow=''
-		test "$_wn_off" -lt "$_wn_len" && _tuish_swindow="${_wn_str:$_wn_off:$_wn_w}"
-		TUISH_SWINDOW=$_tuish_swindow
-		return;;
+		TUISH_SWINDOW=''
+		test "$_wn_off" -lt "$_wn_len" && TUISH_SWINDOW="${_wn_str:$_wn_off:$_wn_w}"
+		return 0;;
 	esac
 	# Slow path: decode UTF-8 (mirrors tuish_str_width), tracking the running
 	# display column _wn_col (the start column of the current char).
-	local _wn_i=0 _wn_col=0 _wn_b0 _wn_b1 _wn_b2 _wn_cp _wn_n _wn_ch
-	_tuish_swindow=''
+	local _wn_i=0 _wn_col=0 _wn_b0 _wn_b1 _wn_b2 _wn_cp _wn_n _wn_ch _wn_out=''
 	while test $_wn_i -lt $_wn_len
 	do
 		_tuish_ord "${_wn_str:$_wn_i:1}"; _wn_b0=$_tuish_code
@@ -208,21 +196,21 @@ tuish_str_window ()
 		then
 			# combining mark: keep it iff attached to a visible base
 			if test $_wn_col -gt $_wn_off && test $_wn_col -le $_wn_end
-			then _tuish_swindow="${_tuish_swindow}${_wn_ch}"; fi
+			then _wn_out="${_wn_out}${_wn_ch}"; fi
 		elif test $((_wn_col + _tuish_cw)) -le $_wn_off
 		then :                                   # entirely left of the window
 		elif test $_wn_col -ge $_wn_end
 		then break                               # entirely right (and all after)
 		elif test $_wn_col -lt $_wn_off
-		then _tuish_swindow="${_tuish_swindow} "  # left straddle: visible right half
+		then _wn_out="${_wn_out} "  # left straddle: visible right half
 		elif test $((_wn_col + _tuish_cw)) -gt $_wn_end
 		then break                               # right straddle: does not fit, drop
-		else _tuish_swindow="${_tuish_swindow}${_wn_ch}"   # fully inside
+		else _wn_out="${_wn_out}${_wn_ch}"   # fully inside
 		fi
 		_wn_col=$((_wn_col + _tuish_cw))
 		_wn_i=$((_wn_i + _wn_n))
 	done
-	TUISH_SWINDOW=$_tuish_swindow
+	TUISH_SWINDOW=$_wn_out
 }
 
 # ─── Codepoint width classification ──────────────────────────────

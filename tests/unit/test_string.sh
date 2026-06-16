@@ -24,74 +24,74 @@ printf 'Unit tests: tuish_str_* string utilities\n'
 # --- tuish_str_len ---
 _t='hello'
 tuish_str_len _t
-assert_eq "$_tuish_slen" "5" "str_len: hello"
+assert_eq "$TUISH_SLEN" "5" "str_len: hello"
 
 _t=''
 tuish_str_len _t
-assert_eq "$_tuish_slen" "0" "str_len: empty"
+assert_eq "$TUISH_SLEN" "0" "str_len: empty"
 
 _t='a'
 tuish_str_len _t
-assert_eq "$_tuish_slen" "1" "str_len: single char"
+assert_eq "$TUISH_SLEN" "1" "str_len: single char"
 
 _t='hello world'
 tuish_str_len _t
-assert_eq "$_tuish_slen" "11" "str_len: with space"
+assert_eq "$TUISH_SLEN" "11" "str_len: with space"
 
 _t='abc/def.txt'
 tuish_str_len _t
-assert_eq "$_tuish_slen" "11" "str_len: with special chars"
+assert_eq "$TUISH_SLEN" "11" "str_len: with special chars"
 
 # --- tuish_str_left ---
 _t='hello world'
 tuish_str_left _t 5
-assert_eq "$_tuish_sleft" "hello" "str_left: first 5"
+assert_eq "$TUISH_SLEFT" "hello" "str_left: first 5"
 
 _t='hello'
 tuish_str_left _t 0
-assert_eq "$_tuish_sleft" "" "str_left: 0 chars"
+assert_eq "$TUISH_SLEFT" "" "str_left: 0 chars"
 
 _t='abc'
 tuish_str_left _t 3
-assert_eq "$_tuish_sleft" "abc" "str_left: full string"
+assert_eq "$TUISH_SLEFT" "abc" "str_left: full string"
 
 _t='abc'
 tuish_str_left _t 1
-assert_eq "$_tuish_sleft" "a" "str_left: 1 char"
+assert_eq "$TUISH_SLEFT" "a" "str_left: 1 char"
 
 # --- tuish_str_right ---
 _t='hello world'
 tuish_str_right _t 6
-assert_eq "$_tuish_sright" "world" "str_right: offset 6"
+assert_eq "$TUISH_SRIGHT" "world" "str_right: offset 6"
 
 _t='hello'
 tuish_str_right _t 0
-assert_eq "$_tuish_sright" "hello" "str_right: offset 0"
+assert_eq "$TUISH_SRIGHT" "hello" "str_right: offset 0"
 
 _t='hello'
 tuish_str_right _t 5
-assert_eq "$_tuish_sright" "" "str_right: past end"
+assert_eq "$TUISH_SRIGHT" "" "str_right: past end"
 
 _t='abcdef'
 tuish_str_right _t 3
-assert_eq "$_tuish_sright" "def" "str_right: offset 3"
+assert_eq "$TUISH_SRIGHT" "def" "str_right: offset 3"
 
 # --- tuish_str_char ---
 _t='hello'
 tuish_str_char _t 0
-assert_eq "$_tuish_schar" "h" "str_char: first"
+assert_eq "$TUISH_SCHAR" "h" "str_char: first"
 
 _t='hello'
 tuish_str_char _t 4
-assert_eq "$_tuish_schar" "o" "str_char: last"
+assert_eq "$TUISH_SCHAR" "o" "str_char: last"
 
 _t='hello'
 tuish_str_char _t 2
-assert_eq "$_tuish_schar" "l" "str_char: middle"
+assert_eq "$TUISH_SCHAR" "l" "str_char: middle"
 
 _t='a'
 tuish_str_char _t 0
-assert_eq "$_tuish_schar" "a" "str_char: single char string"
+assert_eq "$TUISH_SCHAR" "a" "str_char: single char string"
 
 # ─── Byte-mode ASCII fast path tests ─────────────────────────────
 # Under LC_ALL=C (byte mode), pure ASCII strings should produce the
@@ -101,61 +101,61 @@ assert_eq "$_tuish_schar" "a" "str_char: single char string"
 # Long ASCII string — exercises fast path for all operations
 _t='abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 tuish_str_len _t
-assert_eq "$_tuish_slen" "62" "fast path: len of long ASCII"
+assert_eq "$TUISH_SLEN" "62" "fast path: len of long ASCII"
 
 tuish_str_left _t 10
-assert_eq "$_tuish_sleft" "abcdefghij" "fast path: left 10 of long ASCII"
+assert_eq "$TUISH_SLEFT" "abcdefghij" "fast path: left 10 of long ASCII"
 
 tuish_str_right _t 52
-assert_eq "$_tuish_sright" "QRSTUVWXYZ" "fast path: right 52 of long ASCII"
+assert_eq "$TUISH_SRIGHT" "QRSTUVWXYZ" "fast path: right 52 of long ASCII"
 
 tuish_str_char _t 26
-assert_eq "$_tuish_schar" "0" "fast path: char at 26 of long ASCII"
+assert_eq "$TUISH_SCHAR" "0" "fast path: char at 26 of long ASCII"
 
 # String with tab (non-printable, triggers slow path)
 _tab="$(printf '\t')"
 _t="ab${_tab}cd"
 tuish_str_len _t
-assert_eq "$_tuish_slen" "5" "slow path: len with tab"
+assert_eq "$TUISH_SLEN" "5" "slow path: len with tab"
 
 tuish_str_left _t 3
-assert_eq "$_tuish_sleft" "ab${_tab}" "slow path: left 3 with tab"
+assert_eq "$TUISH_SLEFT" "ab${_tab}" "slow path: left 3 with tab"
 
 tuish_str_right _t 3
-assert_eq "$_tuish_sright" "cd" "slow path: right 3 with tab"
+assert_eq "$TUISH_SRIGHT" "cd" "slow path: right 3 with tab"
 
 tuish_str_char _t 2
-assert_eq "$_tuish_schar" "${_tab}" "slow path: char at tab position"
+assert_eq "$TUISH_SCHAR" "${_tab}" "slow path: char at tab position"
 
 # ASCII string with only printable chars and spaces
 _t='hello world 12345 !@#'
 tuish_str_len _t
-assert_eq "$_tuish_slen" "21" "fast path: len with punctuation"
+assert_eq "$TUISH_SLEN" "21" "fast path: len with punctuation"
 
 tuish_str_left _t 12
-assert_eq "$_tuish_sleft" "hello world " "fast path: left 12 with spaces"
+assert_eq "$TUISH_SLEFT" "hello world " "fast path: left 12 with spaces"
 
 tuish_str_right _t 18
-assert_eq "$_tuish_sright" "!@#" "fast path: right past spaces"
+assert_eq "$TUISH_SRIGHT" "!@#" "fast path: right past spaces"
 
 # Edge: empty string (fast path, trivial)
 _t=''
 tuish_str_len _t
-assert_eq "$_tuish_slen" "0" "fast path: len of empty"
+assert_eq "$TUISH_SLEN" "0" "fast path: len of empty"
 
 tuish_str_left _t 0
-assert_eq "$_tuish_sleft" "" "fast path: left 0 of empty"
+assert_eq "$TUISH_SLEFT" "" "fast path: left 0 of empty"
 
 tuish_str_right _t 0
-assert_eq "$_tuish_sright" "" "fast path: right 0 of empty"
+assert_eq "$TUISH_SRIGHT" "" "fast path: right 0 of empty"
 
 # Edge: single char at boundary (printable vs non-printable)
 _t='~'   # 0x7E, last printable ASCII
 tuish_str_len _t
-assert_eq "$_tuish_slen" "1" "fast path: tilde len"
+assert_eq "$TUISH_SLEN" "1" "fast path: tilde len"
 
 tuish_str_char _t 0
-assert_eq "$_tuish_schar" "~" "fast path: tilde char"
+assert_eq "$TUISH_SCHAR" "~" "fast path: tilde char"
 
 # --- tuish_str_window (horizontal column-window) ---
 # ASCII (fast path): column offset == byte offset.
@@ -167,8 +167,7 @@ tuish_str_window _t 8 4;  assert_eq "$TUISH_SWINDOW" ""         "window: offset 
 tuish_str_window _t 10 4; assert_eq "$TUISH_SWINDOW" ""         "window: offset past end -> empty"
 tuish_str_window _t 0 0;  assert_eq "$TUISH_SWINDOW" ""         "window: zero width -> empty"
 tuish_str_window _t 0 8;  assert_eq "$TUISH_SWINDOW" "abcdefgh" "window: whole string"
-# legacy alias is set too
-tuish_str_window _t 1 3;  assert_eq "$_tuish_swindow" "bcd"     "window: legacy alias _tuish_swindow"
+tuish_str_window _t 1 3;  assert_eq "$TUISH_SWINDOW" "bcd"     "window: interior offset"
 
 _t=''
 tuish_str_window _t 0 5;  assert_eq "$TUISH_SWINDOW" ""         "window: empty string"
