@@ -405,4 +405,23 @@ _tuish_draw_cur_style=''
 tuish_draw_hline 1 1 3 style=heavy
 assert_contains "$_draw_out" "[B]" "hline heavy: bold enabled"
 
+# ─── draw_text width clipping (regression) ───────────────────────
+# The str helpers take a variable NAME; draw_text must pass _dt_text directly.
+# A spurious indirection used to measure/slice the literal name "_dt_text", so
+# clipped text printed garbage like "_dt_t" instead of the real characters.
+refute_contains () { case "$1" in *"$2"*) assert_eq "found:$2" "absent" "$3";; *) assert_eq absent absent "$3";; esac; }
+_tuish_draw_origin_r=0 _tuish_draw_origin_c=0 _tuish_draw_clip=0
+_tuish_wrap=0 TUISH_VIEW_COLS=40
+
+_draw_out=''
+tuish_draw_text 1 1 "abcdefghijklmnop" maxwidth=5
+assert_contains "$_draw_out" "abcde"   "draw_text maxwidth: keeps the first 5 columns"
+refute_contains "$_draw_out" "abcdef"  "draw_text maxwidth: clipped at 5 (no 6th char)"
+refute_contains "$_draw_out" "_dt_"    "draw_text: no internal variable-name leak"
+
+_draw_out=''
+tuish_draw_text 1 38 "abcdefghij"
+assert_contains "$_draw_out" "abc"     "draw_text right-edge: prints the fitting head (cols 38-40)"
+refute_contains "$_draw_out" "abcd"    "draw_text right-edge: trimmed to the 3 available columns"
+
 test_summary

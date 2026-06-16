@@ -924,14 +924,14 @@ tuish_draw_text ()
 	test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0 \
 		&& test $_dt_tc -gt $TUISH_VIEW_COLS && return 0
 
-	# Measure text width
-	local _dt_var=_dt_text
-	tuish_str_width _dt_var
+	# Measure text width (str helpers take the variable NAME, so pass _dt_text
+	# directly — an extra indirection here would measure/slice the name itself).
+	tuish_str_width _dt_text
 	local _dt_tw=$TUISH_SWIDTH
 
 	# Apply maxwidth clipping
 	if test $_dt_maxw -ge 0 && test $_dt_tw -gt $_dt_maxw; then
-		tuish_str_left _dt_var $_dt_maxw
+		tuish_str_left _dt_text $_dt_maxw
 		_dt_text=$TUISH_SLEFT
 		_dt_tw=$_dt_maxw
 	fi
@@ -939,10 +939,10 @@ tuish_draw_text ()
 	# Left-edge clipping: trim leading characters
 	if test $_dt_tc -lt 1; then
 		local _dt_skip=$((1 - _dt_tc))
-		tuish_str_right _dt_var $_dt_skip
+		tuish_str_right _dt_text $_dt_skip
 		_dt_text=$TUISH_SRIGHT
 		_dt_tc=1
-		tuish_str_width _dt_var
+		tuish_str_width _dt_text
 		_dt_tw=$TUISH_SWIDTH
 	fi
 
@@ -950,7 +950,7 @@ tuish_draw_text ()
 	if test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0; then
 		local _dt_avail=$((TUISH_VIEW_COLS - _dt_tc + 1))
 		if test $_dt_tw -gt $_dt_avail; then
-			tuish_str_left _dt_var $_dt_avail
+			tuish_str_left _dt_text $_dt_avail
 			_dt_text=$TUISH_SLEFT
 		fi
 	fi
