@@ -37,6 +37,14 @@ _tuish_view_grow_phase=0
 _tuish_view_grow_count=0
 _tuish_resize_cursor_row=0
 
+# Outputs of _tuish_viewport_relayout / _tuish_grow_pin_origin (set before read;
+# defaulted here for set -u). sr_top=0 means "no repair / no scroll region".
+_tuish_relayout_rf=0
+_tuish_relayout_rt=0
+_tuish_relayout_sr_top=0
+_tuish_relayout_sr_bot=0
+_tuish_grow_bot=0
+
 # ─── Scroll-into-view ─────────────────────────────────────────────
 
 # tuish_clamp_scroll POS ORIGIN SPAN [MARGIN] -> TUISH_SCROLL
@@ -169,7 +177,122 @@ _tuish_query_cursor_row ()
 	return 0
 }
 
+# ─── Grow pin-origin ─────────────────────────────────────────────
+# A grown viewport's bottom is INIT_ROW+grow_count. Compute it into
+# _tuish_grow_bot, and when it runs past the screen, pin the block to the bottom
+# (_tuish_view_origin = LINES - grow_count, floored at 1) so it stays visible.
+# When it fits, _tuish_view_origin is left untouched — callers that want it reset
+# to INIT_ROW do so themselves before calling. Shared by tuish_grow's phase
+# transition and the fini gap calculation.
+_tuish_grow_pin_origin ()
+{
+	_tuish_grow_bot=$((TUISH_INIT_ROW + _tuish_view_grow_count))
+	if test $_tuish_grow_bot -gt $TUISH_LINES
+	then
+		_tuish_grow_bot=$TUISH_LINES
+		_tuish_view_origin=$((TUISH_LINES - _tuish_view_grow_count))
+		test $_tuish_view_origin -lt 1 && _tuish_view_origin=1
+	fi
+	return 0
+}
+
 # ─── Resize handler (overrides event.sh stub) ────────────────────
+
+# Clear physical rows FROM..TO (clamped to the screen). The shared repair loop
+# for both fixed and grow resizes.
+_tuish_viewport_repair ()
+{
+	local _rp_r=$1
+	while test $_rp_r -le $2 && test $_rp_r -le $TUISH_LINES
+	do
+		tuish_move $_rp_r 1
+		tuish_clear_line
+		_rp_r=$((_rp_r + 1))
+	done
+}
+
+# Pure layout math for a resize. From the captured old dimensions and the shrunk
+# flag (and the current view state), compute the new TUISH_VIEW_ROWS/VIEW_TOP and
+# physical rows, plus the rows to repair (_tuish_relayout_rf.._rt) and the new
+# scroll region (_tuish_relayout_sr_top.._sr_bot). _sr_top stays 0 when there is
+# nothing to repair (fullscreen, or grow still in phase 0). No terminal I/O — so
+# this is unit-testable without a real terminal. Call after any shrink-push has
+# finalised _tuish_view_origin.
+#   $1 old cols  $2 old lines  $3 old phys  $4 shrunk(0|1)
+_tuish_viewport_relayout ()
+{
+	local _old_cols=$1 _old_phys=$3 _shrunk=$4
+	_tuish_relayout_sr_top=0
+
+	case "$_tuish_view_mode" in
+		fullscreen)
+			TUISH_VIEW_ROWS=$TUISH_LINES
+			_tuish_view_phys=$TUISH_LINES
+			;;
+		fixed)
+			# Logical VIEW_ROWS stays at max; physical rows clip to screen.
+			TUISH_VIEW_ROWS=$_tuish_view_max
+			local _rl_avail=$((TUISH_LINES - _tuish_view_origin + 1))
+			test $_rl_avail -lt 1 && _rl_avail=1
+			local _rl_phys=$_tuish_view_max
+			test $_rl_phys -gt $_rl_avail && _rl_phys=$_rl_avail
+			test $_rl_phys -lt 1 && _rl_phys=1
+			_tuish_view_phys=$_rl_phys
+
+			TUISH_VIEW_TOP=$_tuish_view_origin
+			local _rl_bot=$((_tuish_view_origin + _rl_phys - 1))
+			_tuish_viewport_clear_range $_shrunk "$_old_cols" $_old_phys \
+				$((_rl_bot + 1)) $_tuish_view_origin
+			_tuish_relayout_sr_top=$_tuish_view_origin
+			_tuish_relayout_sr_bot=$_rl_bot
+			;;
+		grow)
+			if test $_tuish_view_grow_phase -eq 1
+			then
+				local _rl_avail=$((TUISH_LINES - _tuish_view_origin))
+				test $_rl_avail -gt $_tuish_view_grow_count && _rl_avail=$_tuish_view_grow_count
+				test $_rl_avail -lt 1 && _rl_avail=1
+				local _rl_bot=$((_tuish_view_origin + _rl_avail))
+				test $_rl_bot -gt $TUISH_LINES && _rl_bot=$TUISH_LINES
+
+				TUISH_VIEW_TOP=$((_tuish_view_origin + 1))
+				TUISH_VIEW_ROWS=$((_rl_bot - _tuish_view_origin))
+				_tuish_view_phys=$TUISH_VIEW_ROWS
+
+				_tuish_viewport_clear_range $_shrunk "$_old_cols" $_old_phys \
+					$((_rl_bot + 1)) $((_tuish_view_origin + 1))
+				_tuish_relayout_sr_top=$((_tuish_view_origin + 1))
+				_tuish_relayout_sr_bot=$_rl_bot
+			fi
+			;;
+	esac
+	return 0
+}
+
+# Compute the stale-row repair range into _tuish_relayout_rf/_rt. Three cases,
+# shared by fixed and grow: on shrink clear from below the viewport to the
+# bottom; on a width change clear from WIDE_FROM (the viewport's first row) to
+# the bottom; otherwise clear just the strip the old viewport occupied below the
+# new bottom (a few rows past, never fewer than 3).
+#   $1 shrunk  $2 old cols  $3 old phys  $4 below-bottom row  $5 wide-from row
+_tuish_viewport_clear_range ()
+{
+	if test $1 -eq 1
+	then
+		_tuish_relayout_rf=$4
+		_tuish_relayout_rt=$TUISH_LINES
+	elif test "$2" -ne "$TUISH_COLUMNS"
+	then
+		_tuish_relayout_rf=$5
+		_tuish_relayout_rt=$TUISH_LINES
+	else
+		_tuish_relayout_rf=$4
+		_tuish_relayout_rt=$((_tuish_view_origin + $3 + 2))
+		test $_tuish_relayout_rt -lt $((_tuish_relayout_rf + 3)) && \
+			_tuish_relayout_rt=$((_tuish_relayout_rf + 3))
+	fi
+	return 0
+}
 
 _tuish_viewport_on_resize ()
 {
@@ -189,102 +312,26 @@ _tuish_viewport_on_resize ()
 	TUISH_VIEW_COLS=$TUISH_COLUMNS
 
 	# On shrink: push content so invocation line reaches row 1.
-	# On grow: keep anchor, expand VIEW_ROWS.
 	local _shrunk=0
 	test $TUISH_LINES -lt $_old_lines && _shrunk=1
 
-	case "$_tuish_view_mode" in
-		fullscreen)
-			TUISH_VIEW_ROWS=$TUISH_LINES
-			_tuish_view_phys=$TUISH_LINES
-			;;
-		fixed)
-			if test $_shrunk -eq 1
-			then
-				_tuish_viewport_shrink_push
-			fi
+	# The shrink-push does terminal I/O and moves the origin, so it runs before
+	# the (pure) layout math reads the origin.
+	if test $_shrunk -eq 1
+	then
+		case "$_tuish_view_mode" in
+			fixed) _tuish_viewport_shrink_push;;
+			grow)  test $_tuish_view_grow_phase -eq 1 && _tuish_viewport_shrink_push;;
+		esac
+	fi
 
-			# Logical VIEW_ROWS stays at max; physical rows clip to screen
-			TUISH_VIEW_ROWS=$_tuish_view_max
-			local _avail=$((TUISH_LINES - _tuish_view_origin + 1))
-			test $_avail -lt 1 && _avail=1
-			local _phys=$_tuish_view_max
-			test $_phys -gt $_avail && _phys=$_avail
-			test $_phys -lt 1 && _phys=1
-			_tuish_view_phys=$_phys
+	_tuish_viewport_relayout "$_old_cols" "$_old_lines" "$_old_phys" "$_shrunk"
 
-			TUISH_VIEW_TOP=$_tuish_view_origin
-			local _bot=$((_tuish_view_origin + _phys - 1))
-
-			# Clear stale lines below/around viewport.
-			local _cf _ct
-			if test $_shrunk -eq 1
-			then
-				_cf=$((_bot + 1))
-				_ct=$TUISH_LINES
-			elif test "$_old_cols" -ne "$TUISH_COLUMNS"
-			then
-				_cf=$_tuish_view_origin
-				_ct=$TUISH_LINES
-			else
-				_cf=$((_bot + 1))
-				_ct=$((_tuish_view_origin + _old_phys + 2))
-				test $_ct -lt $((_cf + 3)) && _ct=$((_cf + 3))
-			fi
-			while test $_cf -le $_ct && test $_cf -le $TUISH_LINES
-			do
-				tuish_move $_cf 1
-				tuish_clear_line
-				_cf=$((_cf + 1))
-			done
-			tuish_scroll_region $_tuish_view_origin $_bot
-			;;
-		grow)
-			if test $_tuish_view_grow_phase -eq 1
-			then
-				local _old_gphys=$_tuish_view_phys
-
-				if test $_shrunk -eq 1
-				then
-					_tuish_viewport_shrink_push
-				fi
-
-				# Clip to available space
-				local _avail=$((TUISH_LINES - _tuish_view_origin))
-				test $_avail -gt $_tuish_view_grow_count && _avail=$_tuish_view_grow_count
-				test $_avail -lt 1 && _avail=1
-				local _bot=$((_tuish_view_origin + _avail))
-				test $_bot -gt $TUISH_LINES && _bot=$TUISH_LINES
-
-				TUISH_VIEW_TOP=$((_tuish_view_origin + 1))
-				TUISH_VIEW_ROWS=$((_bot - _tuish_view_origin))
-				_tuish_view_phys=$TUISH_VIEW_ROWS
-
-				# Clear stale lines below/around viewport
-				local _cf _ct
-				if test $_shrunk -eq 1
-				then
-					_cf=$((_bot + 1))
-					_ct=$TUISH_LINES
-				elif test "$_old_cols" -ne "$TUISH_COLUMNS"
-				then
-					_cf=$((_tuish_view_origin + 1))
-					_ct=$TUISH_LINES
-				else
-					_cf=$((_bot + 1))
-					_ct=$((_tuish_view_origin + _old_gphys + 2))
-					test $_ct -lt $((_cf + 3)) && _ct=$((_cf + 3))
-				fi
-				while test $_cf -le $_ct && test $_cf -le $TUISH_LINES
-				do
-					tuish_move $_cf 1
-					tuish_clear_line
-					_cf=$((_cf + 1))
-				done
-				tuish_scroll_region $((_tuish_view_origin + 1)) $_bot
-			fi
-			;;
-	esac
+	if test $_tuish_relayout_sr_top -gt 0
+	then
+		_tuish_viewport_repair $_tuish_relayout_rf $_tuish_relayout_rt
+		tuish_scroll_region $_tuish_relayout_sr_top $_tuish_relayout_sr_bot
+	fi
 }
 
 # ─── Viewport modes ──────────────────────────────────────────────
@@ -421,19 +468,13 @@ tuish_grow ()
 
 		# Transition to scrolling
 		_tuish_view_grow_phase=1
-		local _bot=$((TUISH_INIT_ROW + _tuish_view_grow_count))
 		_tuish_view_origin=$TUISH_INIT_ROW
-		if test $_bot -gt $TUISH_LINES
-		then
-			_bot=$TUISH_LINES
-			_tuish_view_origin=$((_bot - _tuish_view_grow_count))
-			test $_tuish_view_origin -lt 1 && _tuish_view_origin=1
-		fi
+		_tuish_grow_pin_origin
 		_tuish_view_anchor=$_tuish_view_origin
 		TUISH_VIEW_TOP=$((_tuish_view_origin + 1))
-		TUISH_VIEW_ROWS=$((_bot - _tuish_view_origin))
-		tuish_scroll_region $((_tuish_view_origin + 1)) $_bot
-		tuish_move $_bot 1
+		TUISH_VIEW_ROWS=$((_tuish_grow_bot - _tuish_view_origin))
+		tuish_scroll_region $((_tuish_view_origin + 1)) $_tuish_grow_bot
+		tuish_move $_tuish_grow_bot 1
 	fi
 
 	# Phase 1: scrolling
@@ -458,12 +499,7 @@ _tuish_on_fini ()
 		# Grow phase 0: recompute origin (scrolled past bottom)
 		if test "$_tuish_view_mode" = 'grow' && test $_tuish_view_grow_phase -eq 0
 		then
-			local _bot=$((TUISH_INIT_ROW + _tuish_view_grow_count))
-			if test $_bot -gt $TUISH_LINES
-			then
-				_tuish_view_origin=$(($TUISH_LINES - _tuish_view_grow_count))
-				test $_tuish_view_origin -lt 1 && _tuish_view_origin=1
-			fi
+			_tuish_grow_pin_origin
 		fi
 		if test $_tuish_view_origin -lt $TUISH_INIT_ROW
 		then

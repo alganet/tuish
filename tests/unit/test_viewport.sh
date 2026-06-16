@@ -688,6 +688,98 @@ tuish_clamp_scroll 0 5 4 10;  assert_eq "$TUISH_SCROLL" "0" "clamp: oversized ma
 tuish_clamp_scroll 7 3 1;   assert_eq "$TUISH_SCROLL" "7"  "clamp: span 1 -> origin tracks pos"
 tuish_clamp_scroll 3 3 1;   assert_eq "$TUISH_SCROLL" "3"  "clamp: span 1, pos==origin -> unchanged"
 
+# ─── Pure relayout math (no terminal needed) ─────────────────────
+# _tuish_viewport_relayout is pure integer math over the view state plus the
+# captured (old_cols, old_lines, old_phys, shrunk) — it sets VIEW_ROWS/VIEW_TOP/
+# phys and the repair range (_tuish_relayout_rf/_rt) and scroll region
+# (_tuish_relayout_sr_top/_sr_bot), with no tuish_move/clear. These assert the
+# math directly; the integration test_resize covers the terminal side.
+
+# Fullscreen: rows == screen, no repair (sr_top stays 0).
+_vp_setup; _tuish_view_mode='fullscreen'; TUISH_LINES=24
+_tuish_viewport_relayout 80 24 0 0
+assert_eq "$TUISH_VIEW_ROWS" "24" "relayout fullscreen: VIEW_ROWS == LINES"
+assert_eq "$_tuish_view_phys" "24" "relayout fullscreen: phys == LINES"
+assert_eq "$_tuish_relayout_sr_top" "0" "relayout fullscreen: no repair/scroll region"
+
+# Fixed, steady redraw (same cols, no shrink): phys clips max to available, the
+# repair strip sits just below the new bottom (>= 3 rows).
+_vp_setup; _tuish_view_mode='fixed'; _tuish_view_max=15; _tuish_view_origin=5
+TUISH_LINES=24; TUISH_COLUMNS=80
+_tuish_viewport_relayout 80 24 10 0
+assert_eq "$TUISH_VIEW_ROWS" "15" "relayout fixed steady: VIEW_ROWS == max"
+assert_eq "$_tuish_view_phys" "15" "relayout fixed steady: phys == min(max, avail)"
+assert_eq "$TUISH_VIEW_TOP" "5"  "relayout fixed steady: VIEW_TOP == origin"
+assert_eq "$_tuish_relayout_sr_top" "5"  "relayout fixed steady: scroll-region top"
+assert_eq "$_tuish_relayout_sr_bot" "19" "relayout fixed steady: scroll-region bottom"
+assert_eq "$_tuish_relayout_rf" "20" "relayout fixed steady: repair from below bottom"
+assert_eq "$_tuish_relayout_rt" "23" "relayout fixed steady: repair to >= from+3"
+
+# Fixed, shrunk (origin already pushed by the orchestrator): clear from below the
+# viewport to the screen bottom.
+_vp_setup; _tuish_view_mode='fixed'; _tuish_view_max=15; _tuish_view_origin=2
+TUISH_LINES=10; TUISH_COLUMNS=80
+_tuish_viewport_relayout 80 24 8 1
+assert_eq "$_tuish_view_phys" "9" "relayout fixed shrunk: phys clipped to avail"
+assert_eq "$TUISH_VIEW_TOP" "2" "relayout fixed shrunk: VIEW_TOP == origin"
+assert_eq "$_tuish_relayout_rf" "11" "relayout fixed shrunk: repair from bot+1"
+assert_eq "$_tuish_relayout_rt" "10" "relayout fixed shrunk: repair to LINES"
+
+# Fixed, width change (cols differ): clear the whole viewport column down.
+_vp_setup; _tuish_view_mode='fixed'; _tuish_view_max=15; _tuish_view_origin=5
+TUISH_LINES=24; TUISH_COLUMNS=100
+_tuish_viewport_relayout 80 24 10 0
+assert_eq "$_tuish_relayout_rf" "5"  "relayout fixed width-change: repair from origin"
+assert_eq "$_tuish_relayout_rt" "24" "relayout fixed width-change: repair to LINES"
+
+# Fixed, tiny screen: phys clamps to the rows below origin.
+_vp_setup; _tuish_view_mode='fixed'; _tuish_view_max=15; _tuish_view_origin=20
+TUISH_LINES=24; TUISH_COLUMNS=80
+_tuish_viewport_relayout 80 24 4 0
+assert_eq "$_tuish_view_phys" "5"  "relayout fixed tiny: phys == LINES-origin+1"
+assert_eq "$_tuish_relayout_sr_bot" "24" "relayout fixed tiny: scroll-region bottom == LINES"
+
+# Grow, phase 0: relayout is a no-op (leaves rows alone, no repair).
+_vp_setup; _tuish_view_mode='grow'; _tuish_view_grow_phase=0; TUISH_VIEW_ROWS=99
+_tuish_viewport_relayout 80 24 0 0
+assert_eq "$TUISH_VIEW_ROWS" "99" "relayout grow phase 0: VIEW_ROWS untouched"
+assert_eq "$_tuish_relayout_sr_top" "0" "relayout grow phase 0: no repair/scroll region"
+
+# Grow, phase 1, steady: viewport sits one row below origin.
+_vp_setup; _tuish_view_mode='grow'; _tuish_view_grow_phase=1; _tuish_view_grow_count=5
+_tuish_view_origin=3; TUISH_LINES=24; TUISH_COLUMNS=80
+_tuish_viewport_relayout 80 24 5 0
+assert_eq "$TUISH_VIEW_TOP" "4"  "relayout grow steady: VIEW_TOP == origin+1"
+assert_eq "$TUISH_VIEW_ROWS" "5" "relayout grow steady: VIEW_ROWS == bot-origin"
+assert_eq "$_tuish_relayout_sr_top" "4" "relayout grow steady: scroll-region top == origin+1"
+assert_eq "$_tuish_relayout_sr_bot" "8" "relayout grow steady: scroll-region bottom"
+assert_eq "$_tuish_relayout_rt" "12" "relayout grow steady: repair to >= from+3"
+
+# Grow, phase 1, width change: clear from origin+1 down.
+_vp_setup; _tuish_view_mode='grow'; _tuish_view_grow_phase=1; _tuish_view_grow_count=5
+_tuish_view_origin=3; TUISH_LINES=24; TUISH_COLUMNS=100
+_tuish_viewport_relayout 80 24 5 0
+assert_eq "$_tuish_relayout_rf" "4"  "relayout grow width-change: repair from origin+1"
+assert_eq "$_tuish_relayout_rt" "24" "relayout grow width-change: repair to LINES"
+
+# ─── Pure grow pin-origin math ───────────────────────────────────
+# _tuish_grow_pin_origin computes the grown bottom and, only when it runs past
+# the screen, pins origin to the bottom (floored at 1); otherwise origin is left
+# untouched.
+_vp_setup; TUISH_INIT_ROW=5; _tuish_view_grow_count=3; TUISH_LINES=24
+_tuish_view_origin=5; _tuish_grow_pin_origin
+assert_eq "$_tuish_grow_bot" "8" "pin-origin fits: bot == INIT_ROW+count"
+assert_eq "$_tuish_view_origin" "5" "pin-origin fits: origin untouched"
+
+_vp_setup; TUISH_INIT_ROW=20; _tuish_view_grow_count=10; TUISH_LINES=24
+_tuish_view_origin=20; _tuish_grow_pin_origin
+assert_eq "$_tuish_grow_bot" "24" "pin-origin past bottom: bot clamped to LINES"
+assert_eq "$_tuish_view_origin" "14" "pin-origin past bottom: origin == LINES-count"
+
+_vp_setup; TUISH_INIT_ROW=5; _tuish_view_grow_count=25; TUISH_LINES=24
+_tuish_view_origin=5; _tuish_grow_pin_origin
+assert_eq "$_tuish_view_origin" "1" "pin-origin past bottom: origin floored at 1"
+
 # ─── Done ────────────────────────────────────────────────────────
 
 test_summary
