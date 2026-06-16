@@ -286,12 +286,9 @@ tuish_vmove () { _draw_out="${_draw_out}[M$1,$2]"; }
 tuish_print () { _draw_out="${_draw_out}$*"; }
 tuish_sgr_reset () { _draw_out="${_draw_out}[R]"; }
 tuish_bold () { _draw_out="${_draw_out}[B]"; }
-tuish_fg () { _draw_out="${_draw_out}[F$1]"; }
-tuish_bg () { _draw_out="${_draw_out}[G$1]"; }
-tuish_fg_bright () { :; }
-tuish_bg_bright () { :; }
-tuish_fg256 () { :; }
-tuish_bg256 () { :; }
+# draw.sh emits color via tuish_sgr with a fragment from _tuish_color_params
+# (real). Capture the fragment: fg=N -> [S3N], bg=N -> [S4N], etc.
+tuish_sgr () { _draw_out="${_draw_out}[S$1]"; }
 
 # Reset viewport for rendering tests
 tuish_draw_set_origin 0 0
@@ -358,7 +355,7 @@ case "$_draw_out" in
 	*+*) _has_border=1;; *) _has_border=0;;
 esac
 assert_eq "$_has_border" "0" "box border=none: no border chars"
-assert_contains "$_draw_out" "[G2]" "box border=none: bg color set"
+assert_contains "$_draw_out" "[S42]" "box border=none: bg color set"
 
 # Box with viewport transform
 tuish_draw_set_origin 5 0
@@ -391,13 +388,13 @@ tuish_draw_reset_clip
 _draw_out=''
 _tuish_draw_cur_style=''
 tuish_draw_fill 1 1 3 2 4
-assert_contains "$_draw_out" "[G4]" "fill: bg color set"
+assert_contains "$_draw_out" "[S44]" "fill: bg color set"
 
 # fg option
 _draw_out=''
 _tuish_draw_cur_style=''
 tuish_draw_hline 1 1 3 fg=3
-assert_contains "$_draw_out" "[F3]" "hline fg: color set"
+assert_contains "$_draw_out" "[S33]" "hline fg: color set"
 
 # style=heavy with ascii backend
 _draw_out=''

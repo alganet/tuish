@@ -15,8 +15,8 @@
 #   Screen:     tuish_altscreen_on/off, tuish_newline
 #   Attributes: tuish_sgr, tuish_sgr_reset, tuish_style,
 #               tuish_bold/dim/italic/underline/blink/reverse/strikethrough
-#   Colors:     tuish_fg/bg, tuish_fg_bright/bg_bright, tuish_fg256/bg256,
-#               tuish_fg_rgb/bg_rgb, tuish_fg_default/bg_default
+#   Colors:     tuish_fg/bg (0-7 basic, 8-15 bright, 16-255 palette,
+#               R:G:B truecolor, or 'default')
 #   Movement:   tuish_move_up/down/left/right
 #
 # Dependencies: tui.sh (_tuish_write, tuish_begin/end/flush,
@@ -112,23 +112,41 @@ tuish_blink ()          { _tuish_write '\033[5m'; }
 tuish_reverse ()        { _tuish_write '\033[7m'; }
 tuish_strikethrough ()  { _tuish_write '\033[9m'; }
 
-# Colors — basic (0-7: black red green yellow blue magenta cyan white)
-tuish_fg ()             { _tuish_write "\033[3${1}m"; }
-tuish_bg ()             { _tuish_write "\033[4${1}m"; }
-tuish_fg_bright ()      { _tuish_write "\033[9${1}m"; }
-tuish_bg_bright ()      { _tuish_write "\033[10${1}m"; }
-
-# Colors — 256 palette
-tuish_fg256 ()          { _tuish_write "\033[38;5;${1}m"; }
-tuish_bg256 ()          { _tuish_write "\033[48;5;${1}m"; }
-
-# Colors — truecolor (R G B)
-tuish_fg_rgb ()         { _tuish_write "\033[38;2;${1};${2};${3}m"; }
-tuish_bg_rgb ()         { _tuish_write "\033[48;2;${1};${2};${3}m"; }
-
-# Colors — reset to terminal default
-tuish_fg_default ()     { _tuish_write '\033[39m'; }
-tuish_bg_default ()     { _tuish_write '\033[49m'; }
+# Colors — one parser, two smart entry points. _tuish_color_params ROLE VALUE
+# sets _tuish_cparams to the SGR parameter fragment (no leading ';' or 'm').
+# ROLE is fg or bg. VALUE: '' (none), 0-7 basic, 8-15 bright, 16-255 palette,
+# R:G:B truecolor, or 'default' (reset just this role). Shared by tuish_fg/bg,
+# tuish_style, and draw.sh so the color grammar lives in exactly one place.
+_tuish_color_params ()
+{
+	case "$2" in
+		'')
+			_tuish_cparams='';;
+		default)
+			if test "$1" = fg; then _tuish_cparams=39; else _tuish_cparams=49; fi;;
+		*:*:*)
+			local _cp_t="${2#*:}"
+			if test "$1" = fg
+			then _tuish_cparams="38;2;${2%%:*};${_cp_t%%:*};${_cp_t#*:}"
+			else _tuish_cparams="48;2;${2%%:*};${_cp_t%%:*};${_cp_t#*:}"
+			fi;;
+		*)
+			if test "$1" = fg
+			then
+				if test "$2" -lt 8;    then _tuish_cparams="3$2"
+				elif test "$2" -lt 16; then _tuish_cparams="9$(($2 - 8))"
+				else _tuish_cparams="38;5;$2"
+				fi
+			else
+				if test "$2" -lt 8;    then _tuish_cparams="4$2"
+				elif test "$2" -lt 16; then _tuish_cparams="10$(($2 - 8))"
+				else _tuish_cparams="48;5;$2"
+				fi
+			fi;;
+	esac
+}
+tuish_fg ()             { _tuish_color_params fg "$1"; _tuish_write "\033[${_tuish_cparams}m"; }
+tuish_bg ()             { _tuish_color_params bg "$1"; _tuish_write "\033[${_tuish_cparams}m"; }
 
 # Combined style: tuish_style [bold] [dim] [italic] [underline] [reverse] [fg=N] [bg=N]
 # Emits a single SGR reset + combined sequence. Color accepts 0-7 (basic),
@@ -151,32 +169,8 @@ tuish_style ()
 		esac
 		shift
 	done
-	# Foreground
-	if test -n "$_s_fg"; then
-		case "$_s_fg" in
-			*:*:*)
-				local _r="${_s_fg%%:*}" _rest="${_s_fg#*:}"
-				_s_seq="${_s_seq};38;2;${_r};${_rest%%:*};${_rest#*:}";;
-			*)
-				if test "$_s_fg" -lt 8;        then _s_seq="${_s_seq};3${_s_fg}"
-				elif test "$_s_fg" -lt 16;     then _s_seq="${_s_seq};9$((_s_fg - 8))"
-				else _s_seq="${_s_seq};38;5;${_s_fg}"
-				fi;;
-		esac
-	fi
-	# Background
-	if test -n "$_s_bg"; then
-		case "$_s_bg" in
-			*:*:*)
-				local _r="${_s_bg%%:*}" _rest="${_s_bg#*:}"
-				_s_seq="${_s_seq};48;2;${_r};${_rest%%:*};${_rest#*:}";;
-			*)
-				if test "$_s_bg" -lt 8;        then _s_seq="${_s_seq};4${_s_bg}"
-				elif test "$_s_bg" -lt 16;     then _s_seq="${_s_seq};10$((_s_bg - 8))"
-				else _s_seq="${_s_seq};48;5;${_s_bg}"
-				fi;;
-		esac
-	fi
+	if test -n "$_s_fg"; then _tuish_color_params fg "$_s_fg"; _s_seq="${_s_seq};${_tuish_cparams}"; fi
+	if test -n "$_s_bg"; then _tuish_color_params bg "$_s_bg"; _s_seq="${_s_seq};${_tuish_cparams}"; fi
 	_tuish_write "\033[${_s_seq}m"
 }
 

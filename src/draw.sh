@@ -354,38 +354,20 @@ _tuish_draw_set_style ()
 
 # ─── Color utilities ──────────────────────────────────────────────
 
+# -1 is draw.sh's internal "no color" sentinel (the default for omitted fg=/bg=).
+# Real colors route through the shared term.sh parser so the grammar lives once.
 _tuish_draw_set_fg ()
 {
-	case "$1" in
-		-1) return 0;;
-		*:*:*)
-			local _r="${1%%:*}" _rest="${1#*:}"
-			tuish_fg_rgb "$_r" "${_rest%%:*}" "${_rest#*:}"
-			return 0;;
-	esac
-	if test "$1" -lt 8
-	then tuish_fg "$1"
-	elif test "$1" -lt 16
-	then tuish_fg_bright $(($1 - 8))
-	else tuish_fg256 "$1"
-	fi
+	test "$1" = -1 && return 0
+	_tuish_color_params fg "$1"
+	tuish_sgr "$_tuish_cparams"
 }
 
 _tuish_draw_set_bg ()
 {
-	case "$1" in
-		-1) return 0;;
-		*:*:*)
-			local _r="${1%%:*}" _rest="${1#*:}"
-			tuish_bg_rgb "$_r" "${_rest%%:*}" "${_rest#*:}"
-			return 0;;
-	esac
-	if test "$1" -lt 8
-	then tuish_bg "$1"
-	elif test "$1" -lt 16
-	then tuish_bg_bright $(($1 - 8))
-	else tuish_bg256 "$1"
-	fi
+	test "$1" = -1 && return 0
+	_tuish_color_params bg "$1"
+	tuish_sgr "$_tuish_cparams"
 }
 
 _tuish_draw_set_colors ()
