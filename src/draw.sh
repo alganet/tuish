@@ -154,8 +154,33 @@ _tuish_draw_cur_style=''
 _tuish_draw_cur_join=''
 _tuish_draw_cur_backend=''
 
+# ─── Glyph rows ───────────────────────────────────────────────────
+# Each row packs the 11 working glyphs in order — h v tl tr bl br tee_r tee_l
+# tee_d tee_u cross — built from the named glyphs above so the catalog stays the
+# single source. _tuish_draw_set_style selects a row by backend+style and splits
+# it with `set --` (tokens never contain spaces; -f keeps the split glob-free).
+_tuish_box_u_light="$_tuish_draw_u_h $_tuish_draw_u_v $_tuish_draw_u_tl $_tuish_draw_u_tr $_tuish_draw_u_bl $_tuish_draw_u_br $_tuish_draw_u_tee_r $_tuish_draw_u_tee_l $_tuish_draw_u_tee_d $_tuish_draw_u_tee_u $_tuish_draw_u_cross"
+_tuish_box_u_heavy="$_tuish_draw_u_hv_h $_tuish_draw_u_hv_v $_tuish_draw_u_hv_tl $_tuish_draw_u_hv_tr $_tuish_draw_u_hv_bl $_tuish_draw_u_hv_br $_tuish_draw_u_hv_tee_r $_tuish_draw_u_hv_tee_l $_tuish_draw_u_hv_tee_d $_tuish_draw_u_hv_tee_u $_tuish_draw_u_hv_cross"
+_tuish_box_u_double="$_tuish_draw_u_db_h $_tuish_draw_u_db_v $_tuish_draw_u_db_tl $_tuish_draw_u_db_tr $_tuish_draw_u_db_bl $_tuish_draw_u_db_br $_tuish_draw_u_db_tee_r $_tuish_draw_u_db_tee_l $_tuish_draw_u_db_tee_d $_tuish_draw_u_db_tee_u $_tuish_draw_u_db_cross"
+_tuish_box_u_rounded="$_tuish_draw_u_h $_tuish_draw_u_v $_tuish_draw_u_rtl $_tuish_draw_u_rtr $_tuish_draw_u_rbl $_tuish_draw_u_rbr $_tuish_draw_u_tee_r $_tuish_draw_u_tee_l $_tuish_draw_u_tee_d $_tuish_draw_u_tee_u $_tuish_draw_u_cross"
+_tuish_box_a_light='- | + + + + + + + + +'
+_tuish_box_a_heavy='- | + + + + + + + + +'
+_tuish_box_a_double='= | # # # # # # # # #'
+_tuish_box_a_rounded="- | . . ' ' + + + + +"
+
+# Mixed-junction override rows (unicode only): 5 glyphs tee_r tee_l tee_d tee_u
+# cross, keyed dividerStyle_borderStyle. An absent pair keeps the divider's own
+# junctions (e.g. heavy_double has no dedicated glyphs).
+_tuish_boxj_u_light_heavy="$_tuish_draw_u_lh_tee_r $_tuish_draw_u_lh_tee_l $_tuish_draw_u_lh_tee_d $_tuish_draw_u_lh_tee_u $_tuish_draw_u_lh_cross"
+_tuish_boxj_u_heavy_light="$_tuish_draw_u_hl_tee_r $_tuish_draw_u_hl_tee_l $_tuish_draw_u_hl_tee_d $_tuish_draw_u_hl_tee_u $_tuish_draw_u_hl_cross"
+_tuish_boxj_u_light_double="$_tuish_draw_u_ld_tee_r $_tuish_draw_u_ld_tee_l $_tuish_draw_u_ld_tee_d $_tuish_draw_u_ld_tee_u $_tuish_draw_u_ld_cross"
+_tuish_boxj_u_double_light="$_tuish_draw_u_dl_tee_r $_tuish_draw_u_dl_tee_l $_tuish_draw_u_dl_tee_d $_tuish_draw_u_dl_tee_u $_tuish_draw_u_dl_cross"
+
 # _tuish_draw_set_style STYLE [JOIN]
-# Populate _tuish_draw_ch_*. Mixed junctions when JOIN != STYLE.
+# Populate _tuish_draw_ch_* from the glyph-row tables. The base 6 glyphs come
+# from STYLE; the 5 junctions come from STYLE's divider joining a JOIN-styled
+# border (rounded shares light's junctions). A missing mixed-junction row keeps
+# the divider's own junctions, so e.g. heavy:double needs no special case.
 _tuish_draw_set_style ()
 {
 	local _join="${2:-$1}"
@@ -168,188 +193,42 @@ _tuish_draw_set_style ()
 	_tuish_draw_cur_style="$1"
 	_tuish_draw_cur_join="$_join"
 	_tuish_draw_cur_backend="$TUISH_DRAW_BACKEND"
+
+	# Normalize: unknown style -> light; the effective style (for junctions)
+	# folds rounded into light. Backend prefix u/a. (Locals are _ss_-prefixed:
+	# ksh93 POSIX functions don't reliably scope `local`, so a bare _row would
+	# clobber the callers' _row — the codebase avoids that with unique prefixes.)
+	local _ss_bp=a _ss_style="$1" _sn="$1" _jn="$_join" _ss_row
+	case "$TUISH_DRAW_BACKEND" in unicode) _ss_bp=u;; esac
+	case "$_ss_style" in light|heavy|double|rounded) ;; *) _ss_style=light;; esac
+	case "$_sn" in heavy|double) ;; *) _sn=light;; esac
+	case "$_jn" in heavy|double) ;; *) _jn=light;; esac
+
+	# ascii heavy fakes weight with SGR bold
 	_tuish_draw_ch_bold=0
+	if test "$_ss_bp" = a && test "$_ss_style" = heavy; then _tuish_draw_ch_bold=1; fi
 
-	# ── Phase 1: base chars (h, v, corners) from style ──
-	case "$TUISH_DRAW_BACKEND" in
-		unicode)
-			case "$1" in
-				heavy)
-					_tuish_draw_ch_h="$_tuish_draw_u_hv_h"
-					_tuish_draw_ch_v="$_tuish_draw_u_hv_v"
-					_tuish_draw_ch_tl="$_tuish_draw_u_hv_tl"
-					_tuish_draw_ch_tr="$_tuish_draw_u_hv_tr"
-					_tuish_draw_ch_bl="$_tuish_draw_u_hv_bl"
-					_tuish_draw_ch_br="$_tuish_draw_u_hv_br"
-					;;
-				double)
-					_tuish_draw_ch_h="$_tuish_draw_u_db_h"
-					_tuish_draw_ch_v="$_tuish_draw_u_db_v"
-					_tuish_draw_ch_tl="$_tuish_draw_u_db_tl"
-					_tuish_draw_ch_tr="$_tuish_draw_u_db_tr"
-					_tuish_draw_ch_bl="$_tuish_draw_u_db_bl"
-					_tuish_draw_ch_br="$_tuish_draw_u_db_br"
-					;;
-				rounded)
-					_tuish_draw_ch_h="$_tuish_draw_u_h"
-					_tuish_draw_ch_v="$_tuish_draw_u_v"
-					_tuish_draw_ch_tl="$_tuish_draw_u_rtl"
-					_tuish_draw_ch_tr="$_tuish_draw_u_rtr"
-					_tuish_draw_ch_bl="$_tuish_draw_u_rbl"
-					_tuish_draw_ch_br="$_tuish_draw_u_rbr"
-					;;
-				*)  # light (default)
-					_tuish_draw_ch_h="$_tuish_draw_u_h"
-					_tuish_draw_ch_v="$_tuish_draw_u_v"
-					_tuish_draw_ch_tl="$_tuish_draw_u_tl"
-					_tuish_draw_ch_tr="$_tuish_draw_u_tr"
-					_tuish_draw_ch_bl="$_tuish_draw_u_bl"
-					_tuish_draw_ch_br="$_tuish_draw_u_br"
-					;;
-			esac
-			;;
-		*)  # ascii
-			_tuish_draw_ch_v='|'
-			case "$1" in
-				heavy)
-					_tuish_draw_ch_h='-'
-					_tuish_draw_ch_tl='+' _tuish_draw_ch_tr='+'
-					_tuish_draw_ch_bl='+' _tuish_draw_ch_br='+'
-					_tuish_draw_ch_bold=1
-					;;
-				double)
-					_tuish_draw_ch_h='='
-					_tuish_draw_ch_tl='#' _tuish_draw_ch_tr='#'
-					_tuish_draw_ch_bl='#' _tuish_draw_ch_br='#'
-					;;
-				rounded)
-					_tuish_draw_ch_h='-'
-					_tuish_draw_ch_tl='.' _tuish_draw_ch_tr='.'
-					_tuish_draw_ch_bl="'" _tuish_draw_ch_br="'"
-					;;
-				*)  # light
-					_tuish_draw_ch_h='-'
-					_tuish_draw_ch_tl='+' _tuish_draw_ch_tr='+'
-					_tuish_draw_ch_bl='+' _tuish_draw_ch_br='+'
-					;;
-			esac
-			;;
-	esac
+	# Base row: 11 glyphs (h v tl tr bl br tee_r tee_l tee_d tee_u cross).
+	eval "_ss_row=\$_tuish_box_${_ss_bp}_${_ss_style}"
+	set -- $_ss_row
+	_tuish_draw_ch_h=$1     _tuish_draw_ch_v=$2
+	_tuish_draw_ch_tl=$3    _tuish_draw_ch_tr=$4
+	_tuish_draw_ch_bl=$5    _tuish_draw_ch_br=$6
+	_tuish_draw_ch_tee_r=$7 _tuish_draw_ch_tee_l=$8
+	_tuish_draw_ch_tee_d=$9 _tuish_draw_ch_tee_u=${10} _tuish_draw_ch_cross=${11}
 
-	# ── Phase 2: junction chars (tees/cross) ──
-	# Normalize rounded→light for junction purposes
-	local _sn="$1" _jn="$_join"
-	case "$_sn" in rounded) _sn='light';; esac
-	case "$_jn" in rounded) _jn='light';; esac
-
-	case "$TUISH_DRAW_BACKEND" in
-		unicode)
-			if test "$_sn" = "$_jn"
-			then
-				# Same effective style: standard junctions
-				case "$_sn" in
-					heavy)
-						_tuish_draw_ch_tee_r="$_tuish_draw_u_hv_tee_r"
-						_tuish_draw_ch_tee_l="$_tuish_draw_u_hv_tee_l"
-						_tuish_draw_ch_tee_d="$_tuish_draw_u_hv_tee_d"
-						_tuish_draw_ch_tee_u="$_tuish_draw_u_hv_tee_u"
-						_tuish_draw_ch_cross="$_tuish_draw_u_hv_cross"
-						;;
-					double)
-						_tuish_draw_ch_tee_r="$_tuish_draw_u_db_tee_r"
-						_tuish_draw_ch_tee_l="$_tuish_draw_u_db_tee_l"
-						_tuish_draw_ch_tee_d="$_tuish_draw_u_db_tee_d"
-						_tuish_draw_ch_tee_u="$_tuish_draw_u_db_tee_u"
-						_tuish_draw_ch_cross="$_tuish_draw_u_db_cross"
-						;;
-					*)  # light
-						_tuish_draw_ch_tee_r="$_tuish_draw_u_tee_r"
-						_tuish_draw_ch_tee_l="$_tuish_draw_u_tee_l"
-						_tuish_draw_ch_tee_d="$_tuish_draw_u_tee_d"
-						_tuish_draw_ch_tee_u="$_tuish_draw_u_tee_u"
-						_tuish_draw_ch_cross="$_tuish_draw_u_cross"
-						;;
-				esac
-			else
-				# Mixed: look up cross-style junction chars
-				case "${_sn}:${_jn}" in
-					light:heavy)
-						_tuish_draw_ch_tee_r="$_tuish_draw_u_lh_tee_r"
-						_tuish_draw_ch_tee_l="$_tuish_draw_u_lh_tee_l"
-						_tuish_draw_ch_tee_d="$_tuish_draw_u_lh_tee_d"
-						_tuish_draw_ch_tee_u="$_tuish_draw_u_lh_tee_u"
-						_tuish_draw_ch_cross="$_tuish_draw_u_lh_cross"
-						;;
-					heavy:light)
-						_tuish_draw_ch_tee_r="$_tuish_draw_u_hl_tee_r"
-						_tuish_draw_ch_tee_l="$_tuish_draw_u_hl_tee_l"
-						_tuish_draw_ch_tee_d="$_tuish_draw_u_hl_tee_d"
-						_tuish_draw_ch_tee_u="$_tuish_draw_u_hl_tee_u"
-						_tuish_draw_ch_cross="$_tuish_draw_u_hl_cross"
-						;;
-					light:double)
-						_tuish_draw_ch_tee_r="$_tuish_draw_u_ld_tee_r"
-						_tuish_draw_ch_tee_l="$_tuish_draw_u_ld_tee_l"
-						_tuish_draw_ch_tee_d="$_tuish_draw_u_ld_tee_d"
-						_tuish_draw_ch_tee_u="$_tuish_draw_u_ld_tee_u"
-						_tuish_draw_ch_cross="$_tuish_draw_u_ld_cross"
-						;;
-					double:light)
-						_tuish_draw_ch_tee_r="$_tuish_draw_u_dl_tee_r"
-						_tuish_draw_ch_tee_l="$_tuish_draw_u_dl_tee_l"
-						_tuish_draw_ch_tee_d="$_tuish_draw_u_dl_tee_d"
-						_tuish_draw_ch_tee_u="$_tuish_draw_u_dl_tee_u"
-						_tuish_draw_ch_cross="$_tuish_draw_u_dl_cross"
-						;;
-					*)
-						# No mixed chars available (e.g. heavy:double).
-						# Fall back to divider style's own junctions.
-						case "$_sn" in
-							heavy)
-								_tuish_draw_ch_tee_r="$_tuish_draw_u_hv_tee_r"
-								_tuish_draw_ch_tee_l="$_tuish_draw_u_hv_tee_l"
-								_tuish_draw_ch_tee_d="$_tuish_draw_u_hv_tee_d"
-								_tuish_draw_ch_tee_u="$_tuish_draw_u_hv_tee_u"
-								_tuish_draw_ch_cross="$_tuish_draw_u_hv_cross"
-								;;
-							double)
-								_tuish_draw_ch_tee_r="$_tuish_draw_u_db_tee_r"
-								_tuish_draw_ch_tee_l="$_tuish_draw_u_db_tee_l"
-								_tuish_draw_ch_tee_d="$_tuish_draw_u_db_tee_d"
-								_tuish_draw_ch_tee_u="$_tuish_draw_u_db_tee_u"
-								_tuish_draw_ch_cross="$_tuish_draw_u_db_cross"
-								;;
-							*)
-								_tuish_draw_ch_tee_r="$_tuish_draw_u_tee_r"
-								_tuish_draw_ch_tee_l="$_tuish_draw_u_tee_l"
-								_tuish_draw_ch_tee_d="$_tuish_draw_u_tee_d"
-								_tuish_draw_ch_tee_u="$_tuish_draw_u_tee_u"
-								_tuish_draw_ch_cross="$_tuish_draw_u_cross"
-								;;
-						esac
-						;;
-				esac
-			fi
-			;;
-		*)  # ascii
-			case "$_sn" in
-				double)
-					_tuish_draw_ch_tee_r='#'
-					_tuish_draw_ch_tee_l='#'
-					_tuish_draw_ch_tee_d='#'
-					_tuish_draw_ch_tee_u='#'
-					_tuish_draw_ch_cross='#'
-					;;
-				*)
-					_tuish_draw_ch_tee_r='+'
-					_tuish_draw_ch_tee_l='+'
-					_tuish_draw_ch_tee_d='+'
-					_tuish_draw_ch_tee_u='+'
-					_tuish_draw_ch_cross='+'
-					;;
-			esac
-			;;
-	esac
+	# Mixed junctions: unicode only, when divider and border styles differ and a
+	# cross-style row exists. Otherwise the base row's own junctions stand.
+	if test "$_ss_bp" = u && test "$_sn" != "$_jn"
+	then
+		eval "_ss_row=\${_tuish_boxj_u_${_sn}_${_jn}:-}"
+		set -- $_ss_row
+		if test $# -ge 5
+		then
+			_tuish_draw_ch_tee_r=$1 _tuish_draw_ch_tee_l=$2
+			_tuish_draw_ch_tee_d=$3 _tuish_draw_ch_tee_u=$4 _tuish_draw_ch_cross=$5
+		fi
+	fi
 }
 
 # ─── Color utilities ──────────────────────────────────────────────
