@@ -53,11 +53,9 @@ _tuish_tui_loaded=1
 
 _tuish_buf=''
 _tuish_buffering=0
-_tuish_clipped=0
 
 _tuish_write ()
 {
-	test $_tuish_clipped -eq 1 && return
 	if test $_tuish_buffering -eq 1
 	then
 		_tuish_buf="${_tuish_buf}${1:-}"
@@ -66,7 +64,7 @@ _tuish_write ()
 	fi
 }
 
-tuish_begin ()          { _tuish_clipped=0; _tuish_buffering=1; _tuish_buf=''; }
+tuish_begin ()          { _tuish_buffering=1; _tuish_buf=''; }
 tuish_end ()            { test -n "$_tuish_buf" && _tuish_out "$_tuish_buf"; _tuish_buf=''; _tuish_buffering=0; }
 tuish_flush ()          { test -n "$_tuish_buf" && _tuish_out "$_tuish_buf"; _tuish_buf=''; }
 
@@ -422,7 +420,6 @@ tuish_fini ()
 	# Bypass buffering so cleanup sequences reach the terminal
 	_tuish_buffering=0
 	_tuish_buf=''
-	_tuish_clipped=0
 
 	# Hide cursor during cleanup to avoid flicker
 	tuish_hide_cursor

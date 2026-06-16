@@ -33,9 +33,9 @@ vmove_eq () { _emit=''; tuish_vmove "$1" "$2" || :; assert_eq "$_emit" "$3" "$4"
 # move that should clip: assert nothing emitted + clip flag set
 vmove_clip () {
 	_emit='__none__'
-	if tuish_vmove "$1" "$2"; then :; fi
-	assert_eq "$_emit" '__none__' "$3 (suppressed)"
-	assert_eq "$_tuish_clipped" '1' "$3 (clip flag)"
+	tuish_vmove "$1" "$2" && _vc=0 || _vc=1
+	assert_eq "$_emit" '__none__' "$3 (no emit)"
+	assert_eq "$_vc" '1' "$3 (vmove returns non-zero)"
 }
 # assert haystack contains needle
 assert_in () { case "$1" in *"$2"*) assert_eq 1 1 "$3";; *) assert_eq "missing:$2" "present" "$3";; esac; }
@@ -95,12 +95,11 @@ vmove_clip 1  0  "clip left: col 0"
 vmove_clip 1  11 "clip right: col > W"
 vmove_eq   5 10 '\033[5;10H' "edge: last in-bounds cell is NOT clipped"
 
-# ─── Clip-guard interaction with tuish_print suppression ─────────
-# A clipped move sets _tuish_clipped=1 so the following write is dropped.
-if tuish_vmove 99 1; then :; fi
-assert_eq "$_tuish_clipped" '1' "guard: out-of-bounds move sets clip flag"
-tuish_vmove 1 1 || :
-assert_eq "$_tuish_clipped" '0' "guard: in-bounds move clears clip flag"
+# ─── vmove return status signals clipping (no global flag) ───────
+tuish_vmove 99 1 && _vc=0 || _vc=1
+assert_eq "$_vc" '1' "return: out-of-bounds move returns non-zero"
+tuish_vmove 1 1 && _vc=0 || _vc=1
+assert_eq "$_vc" '0' "return: in-bounds move returns zero"
 
 # ─── canvas_off returns to plain viewport coordinates ────────────
 tuish_canvas_off

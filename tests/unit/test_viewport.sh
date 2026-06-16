@@ -27,8 +27,8 @@ printf 'Unit tests: viewport transitions\n'
 _vp_out=''
 _tuish_write () { _vp_out="${_vp_out}$*"; }
 _tuish_out ()   { _vp_out="${_vp_out}$*"; }
-tuish_move ()            { _tuish_cursor_abs_row=$1; _tuish_clipped=0; _vp_out="${_vp_out}[M$1,$2]"; }
-tuish_vmove ()           { local _abs=$((TUISH_VIEW_TOP + $1 - 1)); if test $_abs -gt $TUISH_LINES; then _tuish_clipped=1; return 1; fi; _tuish_cursor_abs_row=$_abs; _tuish_clipped=0; _vp_out="${_vp_out}[VM$1,$2]"; }
+tuish_move ()            { _tuish_cursor_abs_row=$1; _vp_out="${_vp_out}[M$1,$2]"; }
+tuish_vmove ()           { local _abs=$((TUISH_VIEW_TOP + $1 - 1)); if test $_abs -gt $TUISH_LINES; then return 1; fi; _tuish_cursor_abs_row=$_abs; _vp_out="${_vp_out}[VM$1,$2]"; }
 tuish_clear_line ()      { _vp_out="${_vp_out}[CL]"; }
 tuish_clear_screen ()    { _vp_out="${_vp_out}[CS]"; }
 tuish_altscreen_on ()    { _vp_out="${_vp_out}[ALTON]"; }
@@ -88,7 +88,6 @@ _vp_setup ()
 	_tuish_cursor_abs_row=0
 	_tuish_view_phys=0
 	_tuish_buffering=0
-	_tuish_clipped=0
 	_tuish_buf=''
 }
 

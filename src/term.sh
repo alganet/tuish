@@ -13,7 +13,6 @@ _tuish_term_loaded=1
 #   Clearing:   tuish_clear_line, tuish_clear_to_eol, tuish_clear_to_bol,
 #               tuish_clear_screen, tuish_clear_region
 #   Cursor:     tuish_cursor_shape
-#   Clipping:   tuish_clip_reset
 #   Scrolling:  tuish_scroll_region, tuish_scroll_up/down, tuish_scroll_up_n/down_n
 #   Screen:     tuish_altscreen_on/off, tuish_newline
 #   Attributes: tuish_sgr, tuish_sgr_reset, tuish_style,
@@ -27,7 +26,7 @@ _tuish_term_loaded=1
 
 # ─── Drawing primitives ──────────────────────────────────────────
 
-tuish_move ()           { _tuish_cursor_abs_row=$1; _tuish_clipped=0; _tuish_write "\033[${1};${2}H"; }
+tuish_move ()           { _tuish_cursor_abs_row=$1; _tuish_write "\033[${1};${2}H"; }
 tuish_vmove ()
 {
 	# One affine+clip transform. _tx_* default to the viewport identity (no
@@ -38,18 +37,15 @@ tuish_vmove ()
 	if test $1 -lt $_tx_lrmin || test $1 -gt $_tx_lrmax \
 	   || test $2 -lt $_tx_lcmin || test $2 -gt $_tx_lcmax
 	then
-		_tuish_clipped=1
 		return 1
 	fi
-	local _abs=$(( TUISH_VIEW_TOP - 1 + _tx_off_r + ($1 - 1) * _tx_ch + 1 ))
+	local _abs=$(( TUISH_VIEW_TOP + _tx_off_r + ($1 - 1) * _tx_ch ))
 	local _col=$(( _tx_off_c + ($2 - 1) * _tx_cw + 1 ))
 	if test $_abs -gt $TUISH_LINES
 	then
-		_tuish_clipped=1
 		return 1
 	fi
 	_tuish_cursor_abs_row=$_abs
-	_tuish_clipped=0
 	_tuish_write "\033[$_abs;${_col}H"
 	return 0
 }
@@ -60,13 +56,7 @@ tuish_print ()
 	test $_tuish_printf -eq 1 && case "$_p" in *%*) _p="${_p//\%/%%}";; esac
 	_tuish_write "$_p"
 }
-tuish_print_at ()       { if tuish_vmove "$1" "$2"; then tuish_print "$3"; fi; _tuish_clipped=0; }
-# Re-enable output after a hand-rolled `tuish_vmove`-guarded block. A clipped
-# (off-screen) `tuish_vmove` leaves the guard set so the block's writes are
-# suppressed; call this once the block ends to clear it, exactly as
-# `tuish_print_at` does for the single-text case. Apps must use this rather
-# than touching the private clip flag directly.
-tuish_clip_reset ()     { _tuish_clipped=0; }
+tuish_print_at ()       { if tuish_vmove "$1" "$2"; then tuish_print "$3"; fi; }
 tuish_clear_line ()     { _tuish_write '\033[2K'; }
 tuish_clear_to_eol ()   { _tuish_write '\033[K'; }
 tuish_clear_screen ()   { _tuish_write '\033[2J'; }
@@ -188,5 +178,4 @@ tuish_clear_region ()
 		fi
 		_cr_i=$((_cr_i + 1))
 	done
-	_tuish_clipped=0
 }

@@ -29,11 +29,11 @@ printf 'Unit tests: term.sh output primitives\n'
 _esc=$(printf '\033')
 
 # ─── DECSC: ESC 7 ────────────────────────────────────────────────
-_out=$( _tuish_buffering=0; _tuish_clipped=0; tuish_save_cursor )
+_out=$( _tuish_buffering=0; tuish_save_cursor )
 assert_eq "$_out" "${_esc}7" "save_cursor emits ESC 7 (DECSC)"
 
 # ─── DECRC: ESC 8 ────────────────────────────────────────────────
-_out=$( _tuish_buffering=0; _tuish_clipped=0; tuish_restore_cursor )
+_out=$( _tuish_buffering=0; tuish_restore_cursor )
 assert_eq "$_out" "${_esc}8" "restore_cursor emits ESC 8 (DECRC)"
 
 # ─── Same through the output buffer (begin/flush) ────────────────

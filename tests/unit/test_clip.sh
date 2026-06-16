@@ -6,11 +6,11 @@
 
 # Unit tests for off-screen draw clipping.
 #
-# Regression coverage for REPORT.md finding #1 / #1b:
-#   - A draw that extends past the bottom of the physical screen must not
-#     trip `set -e` (compat.sh enables `set -euf`) and abort the redraw.
-#   - The trailing SGR reset must still be emitted so colors do not leak,
-#     and the clip flag must be left clean for the next primitive.
+# A draw that extends past the bottom of the physical screen must not trip
+# `set -e` (compat.sh enables `set -euf`) and abort the redraw, and the trailing
+# SGR reset must still be emitted so colors do not leak. Each draw primitive
+# guards its writes on tuish_vmove's return (vmove emits nothing and returns
+# non-zero when a row is off-screen); there is no global suppression flag.
 #
 # `set -e` only triggers on a *bare* top-level command, and shells disable it
 # inside if/while/&&/|| conditions — so the off-screen scenario cannot be
@@ -29,7 +29,7 @@ printf 'Unit tests: off-screen clipping (errexit + SGR reset)\n'
 
 # Drive every drawing primitive past the bottom of a fake 5-row screen, as
 # bare statements under `set -euf`. Output is buffered, so only the explicit
-# trailing markers reach stdout — and only if nothing aborted along the way.
+# trailing marker reaches stdout — and only if nothing aborted along the way.
 _probe=$(
 	{ printf '%s\n' \
 		". \"$SRC/compat.sh\"" \
@@ -39,11 +39,11 @@ _probe=$(
 		". \"$SRC/str.sh\"" \
 		". \"$SRC/draw.sh\"" \
 		'TUISH_LINES=5; TUISH_COLUMNS=40; TUISH_VIEW_COLS=40' \
-		'TUISH_VIEW_TOP=1; _tuish_wrap=0; _tuish_clipped=0' \
+		'TUISH_VIEW_TOP=1; _tuish_wrap=0' \
 		'tuish_begin' \
 		'tuish_draw_box 1 1 10 8 fg=2 bg=4' \
-		'_boxbuf="$_tuish_buf"; _clip="$_tuish_clipped"' \
-		'_tuish_clipped=0; tuish_begin' \
+		'_boxbuf="$_tuish_buf"' \
+		'tuish_begin' \
 		'tuish_draw_vline 1 1 12 fg=3' \
 		'tuish_draw_hline 9 1 10' \
 		'tuish_draw_text 9 1 hi fg=1' \
@@ -51,37 +51,30 @@ _probe=$(
 		'tuish_draw_vdiv 1 1 12' \
 		'tuish_clear_region 1 1 4 9' \
 		'tuish_print_at 9 1 x' \
-		'printf "%s@@CLIP=%s@@DONE" "$_boxbuf" "$_clip"' \
+		'printf "%s@@DONE" "$_boxbuf"' \
 	; } | sh 2>/dev/null
 ) || :
 
-# ─── #1: nothing aborted — the trailing marker survived ──────────
+# ─── Nothing aborted — the trailing marker survived ──────────────
 case "$_probe" in
 	*DONE) _reached=yes;;
 	*)     _reached=no;;
 esac
 assert_eq "$_reached" "yes" "box/vline/hline/text/hdiv/vdiv/clear_region/print_at past bottom: no errexit abort"
 
-# ─── #1b: the off-bottom box's trailing SGR reset was still emitted ─
+# ─── The off-bottom box's trailing SGR reset was still emitted ────
 case "$_probe" in
-	*'\033[0m@@CLIP='*) _ends_reset=yes;;
-	*)                  _ends_reset=no;;
+	*'\033[0m@@DONE') _ends_reset=yes;;
+	*)                _ends_reset=no;;
 esac
 assert_eq "$_ends_reset" "yes" "box past bottom: buffer ends with SGR reset (no color leak)"
-
-# ─── #1b: the clip flag was left clean for the next primitive ──────
-case "$_probe" in
-	*'@@CLIP=0@@'*) _clip_clean=yes;;
-	*)             _clip_clean=no;;
-esac
-assert_eq "$_clip_clean" "yes" "box past bottom: clip flag reset on exit"
 
 # ─── Sanity: a fully on-screen colored box still ends with a reset ──
 # (In-process is safe here: nothing clips, so no abort is possible.)
 . "$SRC/compat.sh"; . "$SRC/ord.sh"; . "$SRC/tui.sh"
 . "$SRC/term.sh";   . "$SRC/str.sh"; . "$SRC/draw.sh"
 TUISH_LINES=24; TUISH_COLUMNS=80; TUISH_VIEW_COLS=80
-TUISH_VIEW_TOP=1; _tuish_wrap=0; _tuish_clipped=0
+TUISH_VIEW_TOP=1; _tuish_wrap=0
 tuish_begin
 tuish_draw_box 1 1 6 3 fg=2 bg=4
 _cap="$_tuish_buf"; _tuish_buf=''; _tuish_buffering=0
@@ -91,22 +84,15 @@ case "$_cap" in
 esac
 assert_eq "$_ok" "yes" "on-screen box: still ends with SGR reset"
 
-# ─── tuish_clip_reset: public reset of the clip guard ──────────────
-# A clipped (off-bottom) vmove sets the guard, suppressing the block's writes;
-# tuish_clip_reset clears it so subsequent writes resume — the multi-emit
-# analog of tuish_print_at's trailing reset. (set -e is armed here, so the
-# clipped vmove is guarded with `|| :`.)
+# ─── A clipped vmove emits nothing and returns non-zero ──────────
 tuish_begin
-tuish_vmove 999 1 || :
-assert_eq "$_tuish_clipped" "1" "clip_reset: off-bottom vmove sets the guard"
+tuish_vmove 999 1 && _vc=0 || _vc=1
+assert_eq "$_vc" "1" "off-bottom vmove returns non-zero"
 tuish_print 'X'
-case "$_tuish_buf" in *X*) _leak=yes;; *) _leak=no;; esac
-assert_eq "$_leak" "no" "clip_reset: writes suppressed while clipped"
-tuish_clip_reset
-assert_eq "$_tuish_clipped" "0" "clip_reset: clears the guard"
-tuish_print 'Y'
-case "$_tuish_buf" in *Y*) _resumed=yes;; *) _resumed=no;; esac
-assert_eq "$_resumed" "yes" "clip_reset: writes resume after reset"
+# The print after a clipped vmove is NOT suppressed (no global guard) — the
+# caller decides via the return value; print on its own always writes.
+case "$_tuish_buf" in *X*) _wrote=yes;; *) _wrote=no;; esac
+assert_eq "$_wrote" "yes" "print after clipped vmove writes (no implicit suppression)"
 _tuish_buf=''; _tuish_buffering=0
 
 test_summary

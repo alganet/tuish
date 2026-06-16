@@ -173,7 +173,6 @@ _tuish_query_cursor_row ()
 
 _tuish_viewport_on_resize ()
 {
-	_tuish_clipped=0
 	local _old_cols=${_tuish_precols:-$TUISH_COLUMNS}
 	local _old_lines=$TUISH_LINES
 	local _old_phys=$_tuish_view_phys
@@ -297,7 +296,6 @@ tuish_viewport ()
 
 	# Structural sequences must reach the terminal immediately;
 	# bypass event-loop buffering.
-	_tuish_clipped=0
 	local _vp_was_buffering=$_tuish_buffering
 	test $_tuish_buffering -eq 1 && tuish_flush
 	_tuish_buffering=0
