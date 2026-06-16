@@ -121,6 +121,54 @@ _tuish_viewport_shrink_push ()
 	_tuish_view_anchor=$_tuish_view_origin
 }
 
+# ─── Cursor-row query (DSR/CPR) ──────────────────────────────────
+# Query the terminal for the cursor row via DSR (\033[6n) and parse the CPR
+# reply \033[<row>;<col>R as a byte-at-a-time FSM. Result in
+# _tuish_resize_cursor_row (defaults to the tracked row). Reads one byte at a
+# time rather than init's `read -d R` because mid-event, in raw mode, the line
+# reader is unreliable.
+_tuish_query_cursor_row ()
+{
+	_tuish_resize_cursor_row=$_tuish_cursor_abs_row
+	type _tuish_get_byte >/dev/null 2>&1 || return 0
+	_tuish_write '\033[6n'
+	local _qst=0 _qrow=''
+	while _tuish_get_byte -t1
+	do
+		case $_qst in
+			0)
+				_tuish_ord "$_tuish_byte"
+				test $_tuish_code -eq 27 && _qst=1
+				;;
+			1)
+				case "$_tuish_byte" in
+					'[') _qst=2 ;;
+					*) _qst=0 ;;
+				esac
+				;;
+			2)
+				case "$_tuish_byte" in
+					[0-9]) _qrow="${_qrow}${_tuish_byte}" ;;
+					';') _qst=3 ;;
+					*) _qst=0; _qrow='' ;;
+				esac
+				;;
+			3)
+				case "$_tuish_byte" in
+					[0-9]) ;;
+					R)
+						test -n "$_qrow" && \
+							_tuish_resize_cursor_row=$_qrow
+						break
+						;;
+					*) _qst=0; _qrow='' ;;
+				esac
+				;;
+		esac
+	done
+	return 0
+}
+
 # ─── Resize handler (overrides event.sh stub) ────────────────────
 
 _tuish_viewport_on_resize ()
@@ -131,47 +179,9 @@ _tuish_viewport_on_resize ()
 	local _old_phys=$_tuish_view_phys
 	_tuish_precols=''
 
-	# DSR query for actual cursor row after terminal auto-scroll
+	# Query the actual cursor row after the terminal's resize auto-scroll
 	# (emulators vary in scroll behaviour on resize).
-	_tuish_resize_cursor_row=$_tuish_cursor_abs_row
-	if type _tuish_get_byte >/dev/null 2>&1
-	then
-		_tuish_write '\033[6n'
-		local _qst=0 _qrow=''
-		while _tuish_get_byte -t1
-		do
-			case $_qst in
-				0)
-					_tuish_ord "$_tuish_byte"
-					test $_tuish_code -eq 27 && _qst=1
-					;;
-				1)
-					case "$_tuish_byte" in
-						'[') _qst=2 ;;
-						*) _qst=0 ;;
-					esac
-					;;
-				2)
-					case "$_tuish_byte" in
-						[0-9]) _qrow="${_qrow}${_tuish_byte}" ;;
-						';') _qst=3 ;;
-						*) _qst=0; _qrow='' ;;
-					esac
-					;;
-				3)
-					case "$_tuish_byte" in
-						[0-9]) ;;
-						R)
-							test -n "$_qrow" && \
-								_tuish_resize_cursor_row=$_qrow
-							break
-							;;
-						*) _qst=0; _qrow='' ;;
-					esac
-					;;
-			esac
-		done
-	fi
+	_tuish_query_cursor_row
 
 	# Reset scroll region (some terminals clip it on resize).
 	tuish_reset_scroll
