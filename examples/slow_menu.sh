@@ -82,26 +82,32 @@ _draw ()
 	_row=1
 	for _it in $_items
 	do
-		tuish_vmove "$_row" 2
-		if test "$_row" -eq "$_selected"
+		if tuish_vmove "$_row" 2
 		then
-			tuish_reverse
-			tuish_print " $_it "
-			tuish_sgr_reset
-		else
-			tuish_print " $_it "
+			if test "$_row" -eq "$_selected"
+			then
+				tuish_reverse
+				tuish_print " $_it "
+				tuish_sgr_reset
+			else
+				tuish_print " $_it "
+			fi
+			tuish_clear_to_eol
 		fi
-		tuish_clear_to_eol
 		_row=$((_row + 1))
 	done
-	tuish_vmove $((_total + 2)) 2
-	tuish_dim
-	tuish_print "mode: $_mode | events: $_events | redraws: $_redraws"
-	tuish_clear_to_eol
-	tuish_vmove $((_total + 3)) 2
-	tuish_print 'hold j/k to move, m toggles mode, q quits'
+	if tuish_vmove $((_total + 2)) 2
+	then
+		tuish_dim
+		tuish_print "mode: $_mode | events: $_events | redraws: $_redraws"
+		tuish_clear_to_eol
+	fi
+	if tuish_vmove $((_total + 3)) 2
+	then
+		tuish_print 'hold j/k to move, m toggles mode, q quits'
+		tuish_clear_to_eol
+	fi
 	tuish_sgr_reset
-	tuish_clear_to_eol
 	tuish_show_cursor
 }
 

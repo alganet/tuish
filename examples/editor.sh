@@ -652,8 +652,7 @@ _ed_resize ()
 	local _i=1
 	while test $_i -le $TUISH_VIEW_ROWS
 	do
-		tuish_vmove $_i 1
-		tuish_clear_line
+		if tuish_vmove $_i 1; then tuish_clear_line; fi
 		_i=$((_i + 1))
 	done
 	tuish_request_redraw
@@ -696,25 +695,26 @@ _render ()
 	local _line
 	while test $_vrow -le $_view_height
 	do
-		tuish_vmove $_vrow 1
-
-		if test $_lnum -le $TUISH_BUF_COUNT
+		if tuish_vmove $_vrow 1
 		then
-			tuish_buf_get _ $_lnum; _line="$TUISH_BLINE"
-
-			# Check if this line has selection
-			if test $_sr1 -ne 0 && test $_lnum -ge $_sr1 && test $_lnum -le $_sr2
+			if test $_lnum -le $TUISH_BUF_COUNT
 			then
-				_render_sel_line "$_lnum" "$_line"
+				tuish_buf_get _ $_lnum; _line="$TUISH_BLINE"
+
+				# Check if this line has selection
+				if test $_sr1 -ne 0 && test $_lnum -ge $_sr1 && test $_lnum -le $_sr2
+				then
+					_render_sel_line "$_lnum" "$_line"
+				else
+					_render_clipped_line "$_line"
+				fi
 			else
-				_render_clipped_line "$_line"
+				tuish_sgr '2'
+				tuish_print '~'
+				tuish_sgr_reset
 			fi
-		else
-			tuish_sgr '2'
-			tuish_print '~'
-			tuish_sgr_reset
+			tuish_clear_to_eol
 		fi
-		tuish_clear_to_eol
 
 		_vrow=$((_vrow + 1))
 		_lnum=$((_lnum + 1))
