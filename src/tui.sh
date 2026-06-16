@@ -242,7 +242,10 @@ _tuish_timeout_us ()
 
 # ─── Lifecycle ──────────────────────────────────────────────────────
 
-tuish_init ()
+# Detect the shell's byte-reading capability and define the input primitives
+# (_tuish_get_byte / _tuish_idle_wait / _tuish_peek_byte) accordingly. Returns 1
+# if the shell supports neither read -k (zsh) nor read -n (bash/ksh/busybox).
+_tuish_init_io ()
 {
 	# Detect byte-reading capability
 	if { echo 1 | read -s -k1 -u0 2>/dev/null ;}
@@ -316,7 +319,13 @@ _tuish_heredoc
 		echo 'Shell does not support interactive features (requires read -n or read -k)' 1>&2
 		return 1
 	fi
+	return 0
+}
 
+# Detect the timer resolution and derive the escape/idle timeouts and the zsh
+# idle-chunk count from TUISH_IDLE_TIMEOUT.
+_tuish_init_timing ()
+{
 	# Detect timeout resolution
 	TUISH_TIMING='second'
 	if { echo 1 | read -r -t'0.01' -n 1 2>/dev/null ;} ||
@@ -355,7 +364,13 @@ _tuish_heredoc
 			_tuish_idle_chunks=$(( (_itms + 29) / 30 ))
 		fi
 	fi
+	return 0
+}
 
+# Configure the terminal: variable init, stty + signal traps, setup escape
+# sequences, cursor-position query, and tab stops.
+_tuish_init_term ()
+{
 	_tuish_code=''
 	_tuish_held=''
 	_tuish_noinput=''
@@ -407,6 +422,13 @@ _tuish_heredoc
 		_tcont=$((_tcont + TUISH_TABSIZE))
 	done
 	_tuish_write '\r'
+}
+
+tuish_init ()
+{
+	_tuish_init_io || return 1
+	_tuish_init_timing
+	_tuish_init_term
 }
 
 tuish_fini ()
