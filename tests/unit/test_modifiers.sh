@@ -129,6 +129,52 @@ assert_eq "$TUISH_EVENT" "ctrl-pgup" "ctrl-pgup"
 TUISH_EVENT=''; _tuish_5code_modifiers "91 54 59 53 126" '54' 'pgdn' '126'
 assert_eq "$TUISH_EVENT" "ctrl-pgdn" "ctrl-pgdn"
 
+printf '\n--- _tuish_5code_modifiers: super (Cmd) params 9-16 ---\n'
+
+# Cmd (super) uses the xterm meta bit: param 9 (byte 57='9'), and 10-16 add
+# the lower modifier bits as two-digit params ("49 48" = '1''0' = 10).
+
+# Cmd+arrows: param 9
+TUISH_EVENT=''; _tuish_5code_modifiers "91 49 59 57 68" '49' 'left' '68'
+assert_eq "$TUISH_EVENT" "super-left" "super-left (Cmd+Left)"
+
+TUISH_EVENT=''; _tuish_5code_modifiers "91 49 59 57 67" '49' 'right' '67'
+assert_eq "$TUISH_EVENT" "super-right" "super-right (Cmd+Right)"
+
+TUISH_EVENT=''; _tuish_5code_modifiers "91 49 59 57 65" '49' 'up' '65'
+assert_eq "$TUISH_EVENT" "super-up" "super-up (Cmd+Up)"
+
+TUISH_EVENT=''; _tuish_5code_modifiers "91 49 59 57 66" '49' 'down' '66'
+assert_eq "$TUISH_EVENT" "super-down" "super-down (Cmd+Down)"
+
+# Cmd+Shift+arrows: param 10 ("49 48")
+TUISH_EVENT=''; _tuish_5code_modifiers "91 49 59 49 48 68" '49' 'left' '68'
+assert_eq "$TUISH_EVENT" "shift-super-left" "shift-super-left (Cmd+Shift+Left)"
+
+TUISH_EVENT=''; _tuish_5code_modifiers "91 49 59 49 48 67" '49' 'right' '67'
+assert_eq "$TUISH_EVENT" "shift-super-right" "shift-super-right (Cmd+Shift+Right)"
+
+# Higher combinations: alt-super (11), ctrl-super (13), all four (16)
+TUISH_EVENT=''; _tuish_5code_modifiers "91 49 59 49 49 68" '49' 'left' '68'
+assert_eq "$TUISH_EVENT" "alt-super-left" "alt-super-left (param 11)"
+
+TUISH_EVENT=''; _tuish_5code_modifiers "91 49 59 49 51 68" '49' 'left' '68'
+assert_eq "$TUISH_EVENT" "ctrl-super-left" "ctrl-super-left (param 13)"
+
+TUISH_EVENT=''; _tuish_5code_modifiers "91 49 59 49 54 68" '49' 'left' '68'
+assert_eq "$TUISH_EVENT" "ctrl-alt-shift-super-left" "ctrl-alt-shift-super-left (param 16)"
+
+# Super on Home/End and 5-code nav keys
+TUISH_EVENT=''; _tuish_5code_modifiers "91 49 59 57 72" '49' 'home' '72'
+assert_eq "$TUISH_EVENT" "super-home" "super-home"
+
+TUISH_EVENT=''; _tuish_5code_modifiers "91 51 59 57 126" '51' 'del' '126'
+assert_eq "$TUISH_EVENT" "super-del" "super-del"
+
+# Param 1 (explicit unmodified) yields the bare name
+TUISH_EVENT=''; _tuish_5code_modifiers "91 49 59 49 68" '49' 'left' '68'
+assert_eq "$TUISH_EVENT" "left" "explicit param 1 -> bare name"
+
 # ============================================================
 # _tuish_6code_modifiers: "91 <base> <extra> 59 <mod> 126"
 # ============================================================
@@ -184,6 +230,16 @@ assert_eq "$TUISH_EVENT" "ctrl-f11" "ctrl-f11"
 # F12: base=50, extra=52
 TUISH_EVENT=''; _tuish_6code_modifiers "91 50 52 59 53 126" '50' 'f12' '52'
 assert_eq "$TUISH_EVENT" "ctrl-f12" "ctrl-f12"
+
+printf '\n--- _tuish_6code_modifiers: super (Cmd) ---\n'
+
+# super-f5: param 9 (byte 57)
+TUISH_EVENT=''; _tuish_6code_modifiers "91 49 53 59 57 126" '49' 'f5' '53'
+assert_eq "$TUISH_EVENT" "super-f5" "super-f5"
+
+# shift-super-f5: param 10 ("49 48")
+TUISH_EVENT=''; _tuish_6code_modifiers "91 49 53 59 49 48 126" '49' 'f5' '53'
+assert_eq "$TUISH_EVENT" "shift-super-f5" "shift-super-f5"
 
 # --- Non-matching input should not change TUISH_EVENT ---
 TUISH_EVENT='unchanged'

@@ -228,27 +228,48 @@ F5-F12 use CSI sequences:
 
 ### Modifier Combinations (VT Protocol)
 
-Arrows, F-keys, and navigation keys support 7 modifier combinations plus an
-unmodified entry (modifier value 1). The event name is prefixed with the
-modifier:
+Arrows, F-keys, and navigation keys support the standard modifier combinations
+plus an unmodified entry (modifier value 1). The CSI parameter is `1 + bitmask`
+where the bits are Shift=1, Alt=2, Ctrl=4, and the xterm "meta" bit=8. The event
+name is prefixed with the modifier:
 
-| Prefix            | Modifier       | CSI parameter |
-|-------------------|----------------|---------------|
-| _(none)_          | No modifier    | ;1            |
-| `shift-`          | Shift          | ;2            |
-| `alt-`            | Alt            | ;3            |
-| `alt-shift-`      | Alt+Shift      | ;4            |
-| `ctrl-`           | Ctrl           | ;5            |
-| `ctrl-shift-`     | Ctrl+Shift     | ;6            |
-| `ctrl-alt-`       | Ctrl+Alt       | ;7            |
-| `ctrl-alt-shift-` | Ctrl+Shift+Alt | ;8            |
+| Prefix                  | Modifier             | CSI parameter |
+|-------------------------|----------------------|---------------|
+| _(none)_                | No modifier          | ;1            |
+| `shift-`                | Shift                | ;2            |
+| `alt-`                  | Alt                  | ;3            |
+| `alt-shift-`            | Alt+Shift            | ;4            |
+| `ctrl-`                 | Ctrl                 | ;5            |
+| `ctrl-shift-`           | Ctrl+Shift           | ;6            |
+| `ctrl-alt-`             | Ctrl+Alt             | ;7            |
+| `ctrl-alt-shift-`       | Ctrl+Shift+Alt       | ;8            |
+| `super-`                | Super (Cmd ⌘)        | ;9            |
+| `shift-super-`          | Shift+Super          | ;10           |
+| `alt-super-`            | Alt+Super            | ;11           |
+| `ctrl-super-`           | Ctrl+Super           | ;13           |
+| `ctrl-alt-shift-super-` | Ctrl+Alt+Shift+Super | ;16           |
+
+The meta bit (parameters 9–16) is how terminals report the macOS **Cmd** (⌘) key
+in the legacy VT protocol; tui.sh surfaces it as the `super-` prefix so the event
+names match the kitty protocol's Cmd mapping (see below). The prefix order is
+always `ctrl- alt- shift- super-`.
 
 Examples: `ctrl-right`, `shift-f5`, `alt-shift-up`, `ctrl-home`, `shift-ins`,
-`ctrl-del`, `ctrl-alt-f12`, `ctrl-alt-shift-up`.
+`ctrl-del`, `ctrl-alt-f12`, `ctrl-alt-shift-up`, `super-left`, `super-right`,
+`shift-super-left`.
 
 Modifier sequences use the 5-code form `ESC [ 1 ; <mod> <final>` for arrows,
 F1-F4, Home, End, and the 6-code form `ESC [ <base> <extra> ; <mod> ~` for
 F5-F12, Ins, Del, PgUp, PgDn.
+
+> **Capturing Cmd (⌘).** Whether Cmd reaches the application is terminal-dependent
+> and tui.sh performs no terminal detection. Some terminals send the meta bit
+> above; others only distinguish Cmd from Ctrl under the kitty keyboard protocol
+> (where Cmd is the separate Super bit) — enable it with `tuish_kitty_on`. A
+> terminal that maps Cmd onto the Ctrl modifier in legacy mode emits bytes
+> identical to a real Ctrl press, so the two are inherently indistinguishable
+> there. Terminals that reserve Cmd for their own menus (e.g. Terminal.app,
+> iTerm2 in their default configuration) never deliver it at all.
 
 ### Event Type Suffixes (VT Protocol)
 

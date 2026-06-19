@@ -131,32 +131,58 @@ tuish_wrap_off ()
 
 # ─── Internal: modifier helpers ─────────────────────────────────────
 
-_tuish_5code_modifiers ()
+# Build the canonical modifier prefix from a modifier bitmask and store it in
+# _tuish_modprefix.  Bits: shift=1, alt=2, ctrl=4, super=8, hyper=16, meta=32.
+# Shared by the VT and kitty resolvers so the prefix vocabulary and ordering
+# (ctrl- alt- shift- super- hyper- meta-) live in exactly one place.
+_tuish_modprefix=''
+
+_tuish_bits_prefix ()
 {
-	case "${1}" in
-		"91 ${2} 59 49 ${4}" ) TUISH_EVENT="${3}";;
-		"91 ${2} 59 50 ${4}" ) TUISH_EVENT="shift-${3}";;
-		"91 ${2} 59 51 ${4}" ) TUISH_EVENT="alt-${3}";;
-		"91 ${2} 59 52 ${4}" ) TUISH_EVENT="alt-shift-${3}";;
-		"91 ${2} 59 53 ${4}" ) TUISH_EVENT="ctrl-${3}";;
-		"91 ${2} 59 54 ${4}" ) TUISH_EVENT="ctrl-shift-${3}";;
-		"91 ${2} 59 55 ${4}" ) TUISH_EVENT="ctrl-alt-${3}";;
-		"91 ${2} 59 56 ${4}" ) TUISH_EVENT="ctrl-alt-shift-${3}";;
-	esac
+	_tuish_modprefix=''
+	test $(( ${1} & 4 ))  -ne 0 && _tuish_modprefix="${_tuish_modprefix}ctrl-"
+	test $(( ${1} & 2 ))  -ne 0 && _tuish_modprefix="${_tuish_modprefix}alt-"
+	test $(( ${1} & 1 ))  -ne 0 && _tuish_modprefix="${_tuish_modprefix}shift-"
+	test $(( ${1} & 8 ))  -ne 0 && _tuish_modprefix="${_tuish_modprefix}super-"
+	test $(( ${1} & 16 )) -ne 0 && _tuish_modprefix="${_tuish_modprefix}hyper-"
+	test $(( ${1} & 32 )) -ne 0 && _tuish_modprefix="${_tuish_modprefix}meta-"
+	return 0
 }
 
+# Compute a modifier prefix from a VT/xterm modifier parameter, supplied
+# as the ASCII byte codes of its decimal digits (e.g. "50" = '2' = shift,
+# "49 48" = '1''0' = 10 = shift+super).  The parameter is 1 + a bitmask.
+# Bit 8 is the xterm "meta" bit, which is how terminals report the macOS Cmd
+# (⌘) key in the legacy VT protocol; it is surfaced as super- to match the
+# kitty protocol's Cmd mapping.  Sets _tuish_modprefix; returns non-zero for
+# an unrecognized parameter.
+_tuish_mod_prefix ()
+{
+	local _n
+	case "${1}" in
+		49|5[0-7] )              _n=$(( ${1} - 48 ));;           # params 1-9
+		'49 4'[89]|'49 5'[0-4] ) _n=$(( 10 + ${1##* } - 48 ));;  # params 10-16
+		* )                      return 1;;
+	esac
+	_tuish_bits_prefix $((_n - 1))
+}
+
+# 5-code form: "91 <base> 59 <mod> <final>" (arrows, F1-F4, Home, End).
+_tuish_5code_modifiers ()
+{
+	case "${1}" in "91 ${2} 59 "*" ${4}" ) ;; * ) return;; esac
+	local _mid="${1#91 ${2} 59 }"
+	_tuish_mod_prefix "${_mid% ${4}}" || return
+	TUISH_EVENT="${_tuish_modprefix}${3}"
+}
+
+# 6-code form: "91 <base> <extra> 59 <mod> 126" (F5-F12, Ins/Del, PgUp/PgDn).
 _tuish_6code_modifiers ()
 {
-	case "${1}" in
-		"91 ${2} ${4} 59 49 126" ) TUISH_EVENT="${3}";;
-		"91 ${2} ${4} 59 50 126" ) TUISH_EVENT="shift-${3}";;
-		"91 ${2} ${4} 59 51 126" ) TUISH_EVENT="alt-${3}";;
-		"91 ${2} ${4} 59 52 126" ) TUISH_EVENT="alt-shift-${3}";;
-		"91 ${2} ${4} 59 53 126" ) TUISH_EVENT="ctrl-${3}";;
-		"91 ${2} ${4} 59 54 126" ) TUISH_EVENT="ctrl-shift-${3}";;
-		"91 ${2} ${4} 59 55 126" ) TUISH_EVENT="ctrl-alt-${3}";;
-		"91 ${2} ${4} 59 56 126" ) TUISH_EVENT="ctrl-alt-shift-${3}";;
-	esac
+	case "${1}" in "91 ${2} ${4} 59 "*" 126" ) ;; * ) return;; esac
+	local _mid="${1#91 ${2} ${4} 59 }"
+	_tuish_mod_prefix "${_mid% 126}" || return
+	TUISH_EVENT="${_tuish_modprefix}${3}"
 }
 
 # ─── Event name resolution ────────────────────────────────────────
@@ -488,13 +514,8 @@ _tuish_resolve_event ()
 			57446|57452) _ku_bits=$((_ku_bits & ~32));;
 		esac
 
-		local _ku_prefix=''
-		test $((_ku_bits & 4)) -ne 0 && _ku_prefix="${_ku_prefix}ctrl-"
-		test $((_ku_bits & 2)) -ne 0 && _ku_prefix="${_ku_prefix}alt-"
-		test $((_ku_bits & 1)) -ne 0 && _ku_prefix="${_ku_prefix}shift-"
-		test $((_ku_bits & 8)) -ne 0 && _ku_prefix="${_ku_prefix}super-"
-		test $((_ku_bits & 16)) -ne 0 && _ku_prefix="${_ku_prefix}hyper-"
-		test $((_ku_bits & 32)) -ne 0 && _ku_prefix="${_ku_prefix}meta-"
+		_tuish_bits_prefix "$_ku_bits"
+		local _ku_prefix="$_tuish_modprefix"
 
 		local _ku_key=''
 		case "$_ku_keycode" in

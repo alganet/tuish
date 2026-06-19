@@ -361,6 +361,37 @@ reset_state
 _tuish_parse_event "E 91 49 59 53 58 49 65"
 assert_eq "$TUISH_EVENT" "ctrl-up" "ctrl-up press (event type :1 stripped)"
 
+# --- Super (Cmd) via legacy VT meta bit (params 9-16) ---
+# Cmd+Left: CSI 1 ; 9 D -> bytes 91 49 59 57 68
+reset_state
+_tuish_parse_event "E 91 49 59 57 68"
+assert_eq "$TUISH_EVENT" "super-left" "Cmd+Left (CSI 1;9 D)"
+
+# Cmd+Right: CSI 1 ; 9 C
+reset_state
+_tuish_parse_event "E 91 49 59 57 67"
+assert_eq "$TUISH_EVENT" "super-right" "Cmd+Right (CSI 1;9 C)"
+
+# Cmd+Shift+Left: CSI 1 ; 10 D -> bytes 91 49 59 49 48 68
+reset_state
+_tuish_parse_event "E 91 49 59 49 48 68"
+assert_eq "$TUISH_EVENT" "shift-super-left" "Cmd+Shift+Left (CSI 1;10 D)"
+
+# Cmd+Shift+Right: CSI 1 ; 10 C
+reset_state
+_tuish_parse_event "E 91 49 59 49 48 67"
+assert_eq "$TUISH_EVENT" "shift-super-right" "Cmd+Shift+Right (CSI 1;10 C)"
+
+# super combined with event type: CSI 1 ; 9 : 3 D -> super-left release
+reset_state
+_tuish_parse_event "E 91 49 59 57 58 51 68"
+assert_eq "$TUISH_EVENT" "super-left-rel" "Cmd+Left release (event type :3)"
+
+# super on a 6-code nav key: Cmd+PgUp CSI 5 ; 9 ~ -> bytes 91 53 59 57 126
+reset_state
+_tuish_parse_event "E 91 53 59 57 126"
+assert_eq "$TUISH_EVENT" "super-pgup" "Cmd+PgUp (CSI 5;9 ~)"
+
 # --- Modifier-1 entries (unmodified key with explicit ;1) ---
 # CSI 1 ; 1 A -> up with modifier 1 (no modifier)
 reset_state

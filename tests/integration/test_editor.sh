@@ -101,6 +101,31 @@ sleep 0.3
 
 assert_screen_match "Col 2" "nav: Right arrow moves cursor right"
 
+# ─── macOS Cmd / Cmd+Shift motions (super- via legacy VT meta bit) ──
+# The editor runs in VT mode, so inject CSI 1 ; <mod> sequences directly to
+# verify super- parsing and the editor's macOS bindings end to end.
+# (cursor is at Ln 2, Col 2 on "Second line")
+
+# Cmd+Right = CSI 1 ; 9 C -> super-right -> end of line
+send_hex 1b 5b 31 3b 39 43
+sleep 0.3
+assert_screen_match "Ln 2, Col 12" "cmd: Cmd+Right to end of line (super-right)"
+
+# Cmd+Left = CSI 1 ; 9 D -> super-left -> start of line
+send_hex 1b 5b 31 3b 39 44
+sleep 0.3
+assert_screen_match "Ln 2, Col 1" "cmd: Cmd+Left to start of line (super-left)"
+
+# Cmd+Up = CSI 1 ; 9 A -> super-up -> top of document
+send_hex 1b 5b 31 3b 39 41
+sleep 0.3
+assert_screen_match "Ln 1, Col 1" "cmd: Cmd+Up to top of document (super-up)"
+
+# Cmd+Shift+Down = CSI 1 ; 10 B -> shift-super-down -> select to bottom
+send_hex 1b 5b 31 3b 31 30 42
+sleep 0.3
+assert_screen_match "sel" "cmd: Cmd+Shift+Down selects to bottom (shift-super-down)"
+
 # ─── Rapid key repeat regression ─────────────────────────────────
 # Regression: on zsh (macOS Terminal.app, Zed), consecutive SS3 sequences
 # sent with no inter-byte gap had ESC bytes consumed by the rAF input-peek,

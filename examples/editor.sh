@@ -851,6 +851,15 @@ _ed_setup_bindings ()
 	tuish_bind 'pgup'            '_ed_pgup'
 	tuish_bind 'pgdn'            '_ed_pgdn'
 
+	# macOS motions: Cmd = line/document, Option = word (in a terminal that
+	# reports them; see docs/hid.md). Harmless on other platforms.
+	tuish_bind 'super-left'      '_ed_home'
+	tuish_bind 'super-right'     '_ed_end'
+	tuish_bind 'super-up'        '_ed_top'
+	tuish_bind 'super-down'      '_ed_bottom'
+	tuish_bind 'alt-left'        '_ed_word_left'
+	tuish_bind 'alt-right'       '_ed_word_right'
+
 	# Selection
 	tuish_bind 'shift-up'         '_ed_sel_up'
 	tuish_bind 'shift-down'       '_ed_sel_down'
@@ -862,6 +871,14 @@ _ed_setup_bindings ()
 	tuish_bind 'ctrl-shift-right' '_ed_sel_word_right'
 	tuish_bind 'ctrl-shift-home'  '_ed_sel_top'
 	tuish_bind 'ctrl-shift-end'   '_ed_sel_bottom'
+
+	# macOS selection motions: Cmd+Shift = line/document, Option+Shift = word.
+	tuish_bind 'shift-super-left'  '_ed_sel_home'
+	tuish_bind 'shift-super-right' '_ed_sel_end'
+	tuish_bind 'shift-super-up'    '_ed_sel_top'
+	tuish_bind 'shift-super-down'  '_ed_sel_bottom'
+	tuish_bind 'alt-shift-left'    '_ed_sel_word_left'
+	tuish_bind 'alt-shift-right'   '_ed_sel_word_right'
 
 	# Mouse
 	tuish_bind 'lclik'           '_ed_click'
@@ -876,6 +893,7 @@ _ed_setup_bindings ()
 	tuish_bind 'enter'           '_ed_enter'
 	tuish_bind 'bksp'            '_ed_bksp'
 	tuish_bind 'ctrl-bksp'       '_ed_del_word_left'
+	tuish_bind 'alt-bksp'        '_ed_del_word_left'   # macOS: Option+Backspace
 	tuish_bind 'del'             '_ed_del'
 	tuish_bind 'ctrl-del'        '_ed_del_word_right'
 
