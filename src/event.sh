@@ -204,6 +204,20 @@ _tuish_dump_code ()
 	fi
 }
 
+# Dispatch an accumulated escape body $1 (e.g. "91 67" or " 79 65"): a CSI
+# ('91…'), SS3 (' 79…'), or bare ESC ('') body emits class E unchanged; any other
+# body is an Alt-<key> (ESC + byte), emitted with the 27 (ESC) prefix. Factored
+# out of tuish_run's escape-dispatch sites so the CSI/SS3-vs-Alt rule lives in one
+# place. A plain function (no loop variable) is safe here — see the
+# _tuish_kitty_decode INVARIANT note above.
+_tuish_esc_emit ()
+{
+	case "${1}" in
+		''|91*|' 79'*) _tuish_parse_event "E ${1}";;
+		*) _tuish_parse_event "E 27${1}";;
+	esac
+}
+
 tuish_run ()
 {
 	_tuish_quit=''
@@ -293,6 +307,14 @@ tuish_run ()
 				then
 					_esc="91"
 					continue
+				elif
+					test "$_esc" = '' &&
+					test "$_tuish_byte" = "O"
+				then
+					# SS3 introducer (ESC O): the next byte is the final. Mark the
+					# state so the final-byte check below doesn't fire on the 'O'.
+					_esc=" 79"
+					continue
 				elif test "${_tuish_byte}" = 'u' && test "${_esc}" != "${_esc#91}"
 				then
 					# CSI u (kitty keyboard protocol)
@@ -312,10 +334,7 @@ tuish_run ()
 						# The rAF check defers the redraw instead of peeking; the
 						# burst-final sequence (timeout path below) fires it.
 						_tuish_raf_inhibit=1
-						case "${_esc}" in
-							91*|' 79'*) _tuish_parse_event "E ${_esc}";;
-							*) _tuish_parse_event "E 27${_esc}";;
-						esac
+						_tuish_esc_emit "$_esc"
 						_tuish_raf_inhibit=0
 					fi
 					_esc=''
@@ -327,21 +346,30 @@ tuish_run ()
 						_tuish_parse_event "E 27 ${_tuish_code}"
 						continue 2
 					fi
-					case "${_esc}" in
-						91*|' 79'*) _tuish_parse_event "E ${_esc}";;
-						*) _tuish_parse_event "E 27${_esc}";;
-					esac
+					_tuish_esc_emit "$_esc"
 					_esc=''
 					_tuish_dump_code
 					continue 2
 				fi
 
 				_esc="${_esc} ${_tuish_code}"
+
+				# A CSI/SS3 final byte (0x40-0x7E) ends the sequence: dispatch now
+				# instead of waiting out _tuish_esc_timeout for a continuation that
+				# is not coming. Parameter/intermediate bytes are all < 0x40, so the
+				# first byte >= 0x40 after the introducer is the final one. (Mouse
+				# '<…M/m' and kitty '…u' already break above; the 91*/' 79'* guard
+				# keeps Alt-<key> — ESC with no introducer — on the timeout path.)
+				# This makes cursor/function keys instant and stops a held arrow's
+				# autorepeat from starving idle events.
+				if test "$_tuish_code" -ge 64 && test "$_tuish_code" -le 126
+				then
+					case "${_esc}" in
+						91*|' 79'*) _tuish_parse_event "E ${_esc}"; continue 2;;
+					esac
+				fi
 			done
-			case "${_esc}" in
-				''|91*|' 79'*) _tuish_parse_event "E ${_esc}";;
-				*) _tuish_parse_event "E 27${_esc}";;
-			esac
+			_tuish_esc_emit "$_esc"
 			continue
 		fi
 

@@ -35,6 +35,10 @@
 #   TUISH_TABSIZE          - tab stop interval (default: 4)
 #   TUISH_FINI_OFFSET      - lines below init position to place cursor after fini (default: 0)
 #   TUISH_IDLE_TIMEOUT     - idle event interval in seconds (default: 0.26, or 1 for second timing)
+#   TUISH_ESC_TIMEOUT      - max wait (seconds) for an escape sequence to continue
+#                            (default: 0.02, or 1 for second timing). Well-formed
+#                            CSI/SS3 sequences dispatch on their final byte without
+#                            waiting; this only bounds a lone ESC or an Alt-<key>.
 
 # ─── Dependencies ─────────────────────────────────────────────────
 # Source compat.sh before this file.  It provides:
@@ -334,12 +338,12 @@ _tuish_init_timing ()
 		TUISH_TIMING='sub'
 	fi
 
-	_tuish_esc_timeout='-t0.02'
+	_tuish_esc_timeout="-t${TUISH_ESC_TIMEOUT:-0.02}"
 	_tuish_idle_timeout="-t${TUISH_IDLE_TIMEOUT:-0.26}"
 	_tuish_idle_default='0.26'
 	if test "$TUISH_TIMING" = 'second'
 	then
-		_tuish_esc_timeout='-t1'
+		_tuish_esc_timeout="-t${TUISH_ESC_TIMEOUT:-1}"
 		_tuish_idle_timeout="-t${TUISH_IDLE_TIMEOUT:-1}"
 		_tuish_idle_default='1'
 	fi
