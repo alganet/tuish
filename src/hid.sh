@@ -321,46 +321,50 @@ _tuish_resolve_vt ()
 
 	# Modified nav/function keys. Single-pass replacement for what used
 	# to be up to 24 sequential per-key case matches: map (base sequence,
-	# final) → base name in one case, then (modifier code) → prefix in one
-	# case. Two shapes after event-type stripping above:
+	# final) → base name in one case, then (modifier param) → prefix. Two
+	# shapes after event-type stripping above:
 	#   5-code: "91 <base> 59 <mod> <final>"
 	#   6-code: "91 <base> <extra> 59 <mod> 126"
-	# The modifier slot is matched as exactly two digits ([0-9][0-9], the
-	# byte code of digits 1-8), and each arm anchors the head fully up to
-	# " 59 ": this rejects sequences with extra parameters (matching the
-	# old exact-match behavior) and keeps f5/f6/… from prefix-colliding.
+	# The modifier slot is matched as digit byte code(s) [0-9]*[0-9]: one token
+	# for params 1-9 ("49".."57"), two for the macOS Cmd combos 10-16 ("49 48"
+	# = "10" …). Each arm anchors the head fully up to " 59 ": this rejects
+	# sequences with extra parameters and keeps f5/f6/… from prefix-colliding.
+	# The param is decoded numerically below, so a non-modifier slot (e.g. "99")
+	# stays unresolved and falls through to the kitty/MISS path.
 	if test -z "$TUISH_EVENT"
 	then
 		local _em_base=''
 		case "$_e_seq" in
-			'91 49 59 '[0-9][0-9]' 65')   _em_base='up';;
-			'91 49 59 '[0-9][0-9]' 66')   _em_base='down';;
-			'91 49 59 '[0-9][0-9]' 67')   _em_base='right';;
-			'91 49 59 '[0-9][0-9]' 68')   _em_base='left';;
-			'91 49 59 '[0-9][0-9]' 80')   _em_base='f1';;
-			'91 49 59 '[0-9][0-9]' 81')   _em_base='f2';;
-			'91 49 59 '[0-9][0-9]' 82')   _em_base='f3';;
-			'91 49 59 '[0-9][0-9]' 83')   _em_base='f4';;
-			'91 49 59 '[0-9][0-9]' 72')   _em_base='home';;
-			'91 49 59 '[0-9][0-9]' 70')   _em_base='end';;
-			'91 50 59 '[0-9][0-9]' 126')  _em_base='ins';;
-			'91 51 59 '[0-9][0-9]' 126')  _em_base='del';;
-			'91 53 59 '[0-9][0-9]' 126')  _em_base='pgup';;
-			'91 54 59 '[0-9][0-9]' 126')  _em_base='pgdn';;
-			'91 49 53 59 '[0-9][0-9]' 126') _em_base='f5';;
-			'91 49 55 59 '[0-9][0-9]' 126') _em_base='f6';;
-			'91 49 56 59 '[0-9][0-9]' 126') _em_base='f7';;
-			'91 49 57 59 '[0-9][0-9]' 126') _em_base='f8';;
-			'91 50 48 59 '[0-9][0-9]' 126') _em_base='f9';;
-			'91 50 49 59 '[0-9][0-9]' 126') _em_base='f10';;
-			'91 50 51 59 '[0-9][0-9]' 126') _em_base='f11';;
-			'91 50 52 59 '[0-9][0-9]' 126') _em_base='f12';;
+			'91 49 59 '[0-9]*[0-9]' 65')   _em_base='up';;
+			'91 49 59 '[0-9]*[0-9]' 66')   _em_base='down';;
+			'91 49 59 '[0-9]*[0-9]' 67')   _em_base='right';;
+			'91 49 59 '[0-9]*[0-9]' 68')   _em_base='left';;
+			'91 49 59 '[0-9]*[0-9]' 80')   _em_base='f1';;
+			'91 49 59 '[0-9]*[0-9]' 81')   _em_base='f2';;
+			'91 49 59 '[0-9]*[0-9]' 82')   _em_base='f3';;
+			'91 49 59 '[0-9]*[0-9]' 83')   _em_base='f4';;
+			'91 49 59 '[0-9]*[0-9]' 72')   _em_base='home';;
+			'91 49 59 '[0-9]*[0-9]' 70')   _em_base='end';;
+			'91 50 59 '[0-9]*[0-9]' 126')  _em_base='ins';;
+			'91 51 59 '[0-9]*[0-9]' 126')  _em_base='del';;
+			'91 53 59 '[0-9]*[0-9]' 126')  _em_base='pgup';;
+			'91 54 59 '[0-9]*[0-9]' 126')  _em_base='pgdn';;
+			'91 49 53 59 '[0-9]*[0-9]' 126') _em_base='f5';;
+			'91 49 55 59 '[0-9]*[0-9]' 126') _em_base='f6';;
+			'91 49 56 59 '[0-9]*[0-9]' 126') _em_base='f7';;
+			'91 49 57 59 '[0-9]*[0-9]' 126') _em_base='f8';;
+			'91 50 48 59 '[0-9]*[0-9]' 126') _em_base='f9';;
+			'91 50 49 59 '[0-9]*[0-9]' 126') _em_base='f10';;
+			'91 50 51 59 '[0-9]*[0-9]' 126') _em_base='f11';;
+			'91 50 52 59 '[0-9]*[0-9]' 126') _em_base='f12';;
 		esac
 		if test -n "$_em_base"
 		then
-			# Modifier code = token immediately after " 59 ".
-			local _em_mod="${_e_seq#* 59 }"
-			_em_mod="${_em_mod%% *}"
+			# Modifier param byte code(s) between " 59 " and the final: one
+			# token for params 1-9, two for the macOS Cmd combos 10-16. The
+			# meta bit (params 9-16) is reported as super- to match kitty.
+			local _em_mod="${_e_seq##* 59 }"
+			_em_mod="${_em_mod% *}"
 			case "$_em_mod" in
 				49) TUISH_EVENT="$_em_base";;
 				50) TUISH_EVENT="shift-$_em_base";;
@@ -370,6 +374,14 @@ _tuish_resolve_vt ()
 				54) TUISH_EVENT="ctrl-shift-$_em_base";;
 				55) TUISH_EVENT="ctrl-alt-$_em_base";;
 				56) TUISH_EVENT="ctrl-alt-shift-$_em_base";;
+				57)      TUISH_EVENT="super-$_em_base";;
+				'49 48') TUISH_EVENT="shift-super-$_em_base";;
+				'49 49') TUISH_EVENT="alt-super-$_em_base";;
+				'49 50') TUISH_EVENT="alt-shift-super-$_em_base";;
+				'49 51') TUISH_EVENT="ctrl-super-$_em_base";;
+				'49 52') TUISH_EVENT="ctrl-shift-super-$_em_base";;
+				'49 53') TUISH_EVENT="ctrl-alt-super-$_em_base";;
+				'49 54') TUISH_EVENT="ctrl-alt-shift-super-$_em_base";;
 			esac
 		fi
 	fi
