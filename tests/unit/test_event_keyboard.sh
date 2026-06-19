@@ -264,6 +264,14 @@ _tuish_parse_event "K 97;7"
 assert_eq "$TUISH_EVENT" "ctrl-alt-a" "CSI u: ctrl-alt-a"
 
 reset_state
+_tuish_parse_event "K 97;9"
+assert_eq "$TUISH_EVENT" "super-a" "CSI u: super-a (Cmd, mod 9)"
+
+reset_state
+_tuish_parse_event "K 97;10"
+assert_eq "$TUISH_EVENT" "shift-super-a" "CSI u: shift-super-a (mod 10)"
+
+reset_state
 _tuish_parse_event "K 27"
 assert_eq "$TUISH_EVENT" "esc" "CSI u: escape"
 
@@ -353,6 +361,11 @@ assert_eq "$TUISH_EVENT" "ctrl-up-rel" "ctrl-up release (event type :3)"
 reset_state
 _tuish_parse_event "E 91 49 53 59 49 58 50 126"
 assert_eq "$TUISH_EVENT" "f5-rep" "F5 repeat (event type :2)"
+
+# super (Cmd) with event type: CSI 1 ; 9 : 3 D -> super-left release
+reset_state
+_tuish_parse_event "E 91 49 59 57 58 51 68"
+assert_eq "$TUISH_EVENT" "super-left-rel" "super-left release (event type :3)"
 
 # press event type stripped cleanly: CSI 1 ; 5 : 1 A -> ctrl-up
 reset_state

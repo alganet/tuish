@@ -79,6 +79,14 @@ assert_event "1b 5b 31 3b 33 41" "alt-up" "Alt+Up"
 # Shift+Down: ESC [ 1 ; 2 B = 1b 5b 31 3b 32 42
 assert_event "1b 5b 31 3b 32 42" "shift-down" "Shift+Down"
 
+# --- Super (macOS Cmd) combos via the xterm meta bit ---
+# Cmd+Left: ESC [ 1 ; 9 D = 1b 5b 31 3b 39 44
+assert_event "1b 5b 31 3b 39 44" "super-left" "Cmd+Left (super-left)"
+# Cmd+Right: ESC [ 1 ; 9 C = 1b 5b 31 3b 39 43
+assert_event "1b 5b 31 3b 39 43" "super-right" "Cmd+Right (super-right)"
+# Cmd+Shift+Left: ESC [ 1 ; 10 D = 1b 5b 31 3b 31 30 44
+assert_event "1b 5b 31 3b 31 30 44" "shift-super-left" "Cmd+Shift+Left (shift-super-left)"
+
 # --- Modifier combos on F-keys ---
 # Ctrl+F5: ESC [ 1 5 ; 5 ~ = 1b 5b 31 35 3b 35 7e
 assert_event "1b 5b 31 35 3b 35 7e" "ctrl-f5" "Ctrl+F5"
