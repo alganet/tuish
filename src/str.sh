@@ -120,21 +120,21 @@ tuish_str_width ()
 			_sw_i=$((_sw_i + 1))
 		elif test $_sw_b0 -lt 224 && test $((_sw_i + 1)) -lt $_sw_len
 		then
-			_tuish_ord "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_code
-			_sw_cp=$(( (_sw_b0 & 31) * 64 + (_sw_b1 & 63) ))
+			_tuish_cont6 "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_c6
+			_sw_cp=$(( (_sw_b0 & 31) * 64 + _sw_b1 ))
 			_sw_i=$((_sw_i + 2))
 		elif test $_sw_b0 -lt 240 && test $((_sw_i + 2)) -lt $_sw_len
 		then
-			_tuish_ord "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_code
-			_tuish_ord "${_sw_str:$((_sw_i + 2)):1}"; _sw_b2=$_tuish_code
-			_sw_cp=$(( (_sw_b0 & 15) * 4096 + (_sw_b1 & 63) * 64 + (_sw_b2 & 63) ))
+			_tuish_cont6 "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_c6
+			_tuish_cont6 "${_sw_str:$((_sw_i + 2)):1}"; _sw_b2=$_tuish_c6
+			_sw_cp=$(( (_sw_b0 & 15) * 4096 + _sw_b1 * 64 + _sw_b2 ))
 			_sw_i=$((_sw_i + 3))
 		elif test $_sw_b0 -lt 248 && test $((_sw_i + 3)) -lt $_sw_len
 		then
-			_tuish_ord "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_code
-			_tuish_ord "${_sw_str:$((_sw_i + 2)):1}"; _sw_b2=$_tuish_code
-			_tuish_ord "${_sw_str:$((_sw_i + 3)):1}"
-			_sw_cp=$(( (_sw_b0 & 7) * 262144 + (_sw_b1 & 63) * 4096 + (_sw_b2 & 63) * 64 + (_tuish_code & 63) ))
+			_tuish_cont6 "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_c6
+			_tuish_cont6 "${_sw_str:$((_sw_i + 2)):1}"; _sw_b2=$_tuish_c6
+			_tuish_cont6 "${_sw_str:$((_sw_i + 3)):1}"
+			_sw_cp=$(( (_sw_b0 & 7) * 262144 + _sw_b1 * 4096 + _sw_b2 * 64 + _tuish_c6 ))
 			_sw_i=$((_sw_i + 4))
 		else
 			# Stray continuation byte, invalid lead (0xF8-0xFF), or a lead
@@ -180,17 +180,17 @@ tuish_str_window ()
 		if test $_wn_b0 -lt 128
 		then _wn_n=1; _wn_cp=$_wn_b0
 		elif test $_wn_b0 -lt 224 && test $((_wn_i + 1)) -lt $_wn_len
-		then _tuish_ord "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_code
-		     _wn_n=2; _wn_cp=$(( (_wn_b0 & 31) * 64 + (_wn_b1 & 63) ))
+		then _tuish_cont6 "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_c6
+		     _wn_n=2; _wn_cp=$(( (_wn_b0 & 31) * 64 + _wn_b1 ))
 		elif test $_wn_b0 -lt 240 && test $((_wn_i + 2)) -lt $_wn_len
-		then _tuish_ord "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_code
-		     _tuish_ord "${_wn_str:$((_wn_i + 2)):1}"; _wn_b2=$_tuish_code
-		     _wn_n=3; _wn_cp=$(( (_wn_b0 & 15) * 4096 + (_wn_b1 & 63) * 64 + (_wn_b2 & 63) ))
+		then _tuish_cont6 "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_c6
+		     _tuish_cont6 "${_wn_str:$((_wn_i + 2)):1}"; _wn_b2=$_tuish_c6
+		     _wn_n=3; _wn_cp=$(( (_wn_b0 & 15) * 4096 + _wn_b1 * 64 + _wn_b2 ))
 		elif test $_wn_b0 -lt 248 && test $((_wn_i + 3)) -lt $_wn_len
-		then _tuish_ord "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_code
-		     _tuish_ord "${_wn_str:$((_wn_i + 2)):1}"; _wn_b2=$_tuish_code
-		     _tuish_ord "${_wn_str:$((_wn_i + 3)):1}"
-		     _wn_n=4; _wn_cp=$(( (_wn_b0 & 7) * 262144 + (_wn_b1 & 63) * 4096 + (_wn_b2 & 63) * 64 + (_tuish_code & 63) ))
+		then _tuish_cont6 "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_c6
+		     _tuish_cont6 "${_wn_str:$((_wn_i + 2)):1}"; _wn_b2=$_tuish_c6
+		     _tuish_cont6 "${_wn_str:$((_wn_i + 3)):1}"
+		     _wn_n=4; _wn_cp=$(( (_wn_b0 & 7) * 262144 + _wn_b1 * 4096 + _wn_b2 * 64 + _tuish_c6 ))
 		else _wn_n=1; _wn_cp=$_wn_b0
 		fi
 		_tuish_char_width $_wn_cp

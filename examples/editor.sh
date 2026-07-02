@@ -754,19 +754,21 @@ _render_sel_line ()
 	# (reverse), after (normal) — each clipped to the visible window. Splitting
 	# at a char-aligned column boundary tiles to the same glyphs as
 	# _render_clipped_line, with tuish_str_window handling the edge straddles.
-	local _off _end _w
+	# Build the three sub-windows — before (normal), selected (reverse), after
+	# (normal) — into ONE string with the reverse-video toggles embedded via the
+	# *_seq builders, then emit with a SINGLE tuish_print. The embedded sequences
+	# use the raw ESC byte (see term.sh) so they survive tuish_print's escaping
+	# while the line's own %/backslash text is escaped correctly.
+	local _off _end _w _out=''
 
 	# Before selection.
 	_end=$_sel_c0
 	test $_end -gt $_vw_r && _end=$_vw_r
 	_w=$((_end - _view_left))
 	if test $_w -gt 0
-	then
-		tuish_str_window _line $_view_left $_w
-		tuish_print "$TUISH_SWINDOW"
-	fi
+	then tuish_str_window _line $_view_left $_w; _out="$TUISH_SWINDOW"; fi
 
-	# Selected text.
+	# Selected text (reverse video).
 	_off=$_sel_c0
 	test $_off -lt $_view_left && _off=$_view_left
 	_end=$_sel_c1
@@ -774,10 +776,9 @@ _render_sel_line ()
 	_w=$((_end - _off))
 	if test $_w -gt 0
 	then
-		tuish_sgr '7'
-		tuish_str_window _line $_off $_w
-		tuish_print "$TUISH_SWINDOW"
-		tuish_sgr_reset
+		tuish_sgr_seq 7;       _out="${_out}${TUISH_SEQ}"
+		tuish_str_window _line $_off $_w; _out="${_out}${TUISH_SWINDOW}"
+		tuish_sgr_reset_seq;   _out="${_out}${TUISH_SEQ}"
 	fi
 
 	# After selection.
@@ -785,10 +786,9 @@ _render_sel_line ()
 	test $_off -lt $_view_left && _off=$_view_left
 	_w=$((_vw_r - _off))
 	if test $_w -gt 0
-	then
-		tuish_str_window _line $_off $_w
-		tuish_print "$TUISH_SWINDOW"
-	fi
+	then tuish_str_window _line $_off $_w; _out="${_out}${TUISH_SWINDOW}"; fi
+
+	tuish_print "$_out"
 }
 
 _render_status ()

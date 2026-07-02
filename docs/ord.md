@@ -6,7 +6,7 @@ SPDX-License-Identifier: ISC
 
 # ASCII Lookup Tables (ord.sh)
 
-Precomputed ASCII ord/chr tables for codes 1-127. Source after `compat.sh`.
+Precomputed ord/chr tables for byte values 1-255. Source after `compat.sh`.
 
 ```sh
 . ./src/compat.sh
@@ -22,15 +22,16 @@ sanitization), and str.sh (UTF-8 byte decoding).
 
 ## Internal API
 
-| Symbol         | Description                                                            |
-|----------------|------------------------------------------------------------------------|
-| `_tuish_ord()` | Character → ASCII code (result in `_tuish_code`)                       |
-| `_tuish_chr_N` | Code → character lookup variables (`_tuish_chr_1` .. `_tuish_chr_127`) |
+| Symbol           | Description                                                                     |
+|------------------|----------------------------------------------------------------------------------|
+| `_tuish_ord()`   | Character → byte value (result in `_tuish_code`)                                 |
+| `_tuish_cont6()` | UTF-8 continuation byte → low 6 bits (result in `_tuish_c6`; str.sh decode loops) |
+| `_tuish_chr_N`   | Code → character lookup variables (`_tuish_chr_1` .. `_tuish_chr_255`)           |
 
 ### Shell-Specific Table Generation
 
 | Shell          | Method                         |
 |----------------|--------------------------------|
 | bash, zsh      | `printf -v` (no subshell)      |
-| mksh           | `echo -ne` with hex escapes    |
+| mksh           | `echo -ne` with octal escapes  |
 | ksh93, busybox | Subshell fallback at init time |
