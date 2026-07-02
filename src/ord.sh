@@ -86,6 +86,29 @@ _tuish_build_ord_hi ()
 	eval "_tuish_ord_hi () { case \"\$1\" in ${_body}*) _tuish_code=0;; esac; }"
 }
 
+# UTF-8 continuation-byte fast decoder (result in _tuish_c6 = the low 6 bits,
+# 0-63). The str.sh width/window decode loops need ONLY `byte & 63` from every
+# continuation byte, and they already know those bytes are continuations. Going
+# through _tuish_ord for them wastes a whole scan of _tuish_ord's ~95-arm
+# printable-ASCII case (all misses, since a continuation byte 0x80-0xBF is never
+# printable ASCII) plus a second function call into _tuish_ord_hi. A dedicated
+# 64-arm case keyed on the 0x80-0xBF chr vars returns the masked value in one
+# call — cutting the per-continuation-byte cost roughly in half on the
+# generated-case shells (busybox/ksh93/mksh). Same byte-substituted-at-match
+# safety as _tuish_build_ord_hi above (no raw byte in eval'd source). Lead and
+# ASCII first bytes still go through _tuish_ord, whose literal ASCII case keeps
+# the common all-ASCII string fast.
+_tuish_build_cont ()
+{
+	local _i=128 _body=''
+	while test $_i -le 191
+	do
+		_body="${_body}\"\$_tuish_chr_${_i}\") _tuish_c6=$((_i - 128));; "
+		_i=$((_i + 1))
+	done
+	eval "_tuish_cont6 () { case \"\$1\" in ${_body}*) _tuish_c6=0;; esac; }"
+}
+
 # bash/zsh have `printf -v` (a fork-free assignment) and can resolve any byte
 # in O(1): `printf '%d' "'<byte>"` yields the char's value, signed on
 # signed-char platforms, so correct back to unsigned 1-255. Shells without
@@ -103,9 +126,13 @@ then
 			_tuish_code=$((_tuish_code + 256))
 		fi
 	}
+	# Masking the low 6 bits works on the signed value too (two's complement),
+	# so no unsigned correction is needed here.
+	_tuish_cont6 () { printf -v _tuish_c6 '%d' "'$1"; _tuish_c6=$((_tuish_c6 & 63)); }
 	unset _tuish_pv_probe 2>/dev/null || _tuish_pv_probe=''
 else
 	_tuish_build_ord_hi
+	_tuish_build_cont
 fi
 
 # Fast ord: literal case for printable ASCII (no var expansion — hot input

@@ -46,4 +46,31 @@ tuish_restore_cursor
 _out=$( tuish_end )
 assert_eq "$_out" "${_esc}7${_esc}[2K${_esc}8" "buffered save/clear/restore round-trips"
 
+# ─── Sequence builders: build into TUISH_SEQ (literal ESC), write nothing ──
+# The batched-render helpers must (a) use a raw ESC byte so the sequence can be
+# embedded in a tuish_print row string, and (b) emit nothing themselves.
+tuish_fg_seq 4;            assert_eq "$TUISH_SEQ" "${_esc}[34m"     "fg_seq 4 -> ESC[34m"
+tuish_bg_seq 4;            assert_eq "$TUISH_SEQ" "${_esc}[44m"     "bg_seq 4 -> ESC[44m"
+tuish_sgr_seq 7;           assert_eq "$TUISH_SEQ" "${_esc}[7m"      "sgr_seq 7 -> ESC[7m"
+tuish_sgr_reset_seq;       assert_eq "$TUISH_SEQ" "${_esc}[0m"      "sgr_reset_seq -> ESC[0m"
+tuish_style_seq bold fg=1; assert_eq "$TUISH_SEQ" "${_esc}[0;1;31m" "style_seq bold fg=1"
+# The plain writer delegates to tuish_style_seq — same bytes, but written out.
+_out=$( _tuish_buffering=0; tuish_style bold fg=1 )
+assert_eq "$_out" "${_esc}[0;1;31m" "style (writer) emits the style_seq bytes"
+_out=$( _tuish_buffering=0; tuish_fg_seq 4 )
+assert_eq "$_out" "" "fg_seq writes nothing (only sets TUISH_SEQ)"
+
+# The linchpin: an embedded seq + %-bearing text round-trips through tuish_print
+# — the text's % is escaped for the flush printf while the raw-ESC seq passes
+# through verbatim (so a batched row of colour + arbitrary text is correct).
+tuish_fg_seq 2
+_row="${TUISH_SEQ}50%done"
+_out=$( _tuish_buffering=0; tuish_print "$_row" )
+assert_eq "$_out" "${_esc}[32m50%done" "embedded seq + % text survives tuish_print"
+
+# ─── tuish_put_at: place then print, no width computation ────────
+TUISH_LINES=24
+_out=$( _tuish_buffering=0; tuish_put_at 1 1 'hi' )
+assert_eq "$_out" "${_esc}[1;1Hhi" "put_at places (vmove) then prints"
+
 test_summary

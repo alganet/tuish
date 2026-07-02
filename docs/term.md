@@ -49,6 +49,7 @@ screen clearing, and scroll regions. Source after `tui.sh`.
 | `tuish_print TEXT`                             | Print text at cursor position (backslashes and `%` signs are escaped automatically) |
 | `tuish_text ROW COL TEXT [fg= bg= maxwidth=]`  | Viewport/canvas-relative move + colored, width-clipped print (see below)             |
 | `tuish_print_at ROW COL TEXT`                  | Convenience alias for `tuish_text ROW COL TEXT` (no color/width options)             |
+| `tuish_put_at ROW COL TEXT`                    | Fast place-and-print: no display-width clipping (see below)                          |
 | `tuish_newline`                                | Output newline + carriage return                                                    |
 
 ### tuish_text ROW COL TEXT [fg=N] [bg=N] [maxwidth=N]
@@ -69,6 +70,15 @@ the terminal clip at the screen edge.
 tuish_text 3 5 "Hello"                       # plain placement
 tuish_text 1 1 "$status" fg=2 maxwidth=20    # green, clipped to 20 display columns
 ```
+
+### tuish_put_at ROW COL TEXT
+
+The fast path for callers that already know `TEXT` fits its cell: position via
+`tuish_vmove` (which still clips off-screen cells) and print, skipping the
+display-width computation `tuish_text`/`tuish_print_at` run per call. Use it
+for fixed-size sprites/glyphs or pre-clipped slices in render loops; there is
+no right-edge trimming, so text wider than the remaining columns is the
+caller's responsibility.
 
 ## Erase
 
@@ -129,6 +139,35 @@ Accepts any combination of attribute names (`bold`, `dim`, `italic`, `underline`
 tuish_style bold fg=1              # bold red
 tuish_style italic underline fg=45 bg=0  # italic underlined magenta on black
 tuish_style fg=255:128:0           # truecolor orange foreground
+```
+
+### Sequence Builders (batched rendering)
+
+Each writer above has a `*_seq` twin that builds the SGR escape into the
+variable `TUISH_SEQ` instead of writing it:
+
+| Function                                | Builds                                    |
+|-----------------------------------------|-------------------------------------------|
+| `tuish_fg_seq VALUE`                    | Foreground color (same forms as `tuish_fg`) |
+| `tuish_bg_seq VALUE`                    | Background color (same forms as `tuish_bg`) |
+| `tuish_sgr_seq CODE`                    | Arbitrary SGR attribute                   |
+| `tuish_sgr_reset_seq`                   | Reset all attributes and colors           |
+| `tuish_style_seq [attrs] [fg=N] [bg=N]` | Combined style (same forms as `tuish_style`) |
+
+A render loop can assemble a whole row as one string — appending `TUISH_SEQ`
+only when the color/style *changes* — and emit it with a single `tuish_print`,
+instead of paying one write call per colored cell. On slow interpreters the
+per-frame call count dominates render cost, so dense output gets several times
+faster.
+
+The built sequence uses a literal ESC byte (not `\033`), so it passes through
+`tuish_print`'s backslash/`%` escaping untouched and can be safely embedded in
+a row string that also carries arbitrary text.
+
+```sh
+tuish_fg_seq 4; row="${TUISH_SEQ}████"       # blue wall...
+tuish_sgr_reset_seq; row="${row}${TUISH_SEQ}"
+tuish_print "$row"                           # one write for the whole run
 ```
 
 ## Colors

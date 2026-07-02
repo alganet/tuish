@@ -471,34 +471,72 @@ _step ()  # $1 = dt (µs) — advance time-based physics: gravity, fall, enemies
 }
 
 # ─── Rendering (tile col -> terminal col via _tcol) ──────────────
-_emit_tile ()  # $1 tile char  (emits a TW-wide glyph at the cursor)
+# Map char -> "colour glyph" appended to a row builder. Sets _tile_glyph and
+# _tile_want (the fg colour the tile needs, or 'none'). Walls/platforms carry a
+# colour; the spike/lava emoji are self-coloured, so 'none'. Keeping the tile
+# table in one place for both the row builder and the single-cell restore.
+_tile_glyph ()  # $1 tile char -> _tile_glyph, _tile_want
 {
 	case "$1" in
-		'#') tuish_fg 4; tuish_print "$G_WALL"; tuish_sgr_reset;;
-		'=') tuish_fg 2; tuish_print "$G_PLAT"; tuish_sgr_reset;;
-		'^') tuish_print "$G_SPIKE";;
-		'~') tuish_print "$G_LAVA";;
-		*)   tuish_print "$G_AIR";;
+		'#') _tile_want=4;    _tile_glyph=$G_WALL;;
+		'=') _tile_want=2;    _tile_glyph=$G_PLAT;;
+		'^') _tile_want=none; _tile_glyph=$G_SPIKE;;
+		'~') _tile_want=none; _tile_glyph=$G_LAVA;;
+		*)   _tile_want=none; _tile_glyph=$G_AIR;;
 	esac
-	return 0
 }
 
 _paint_cell ()  # $1 row $2 tile-col  (restore one full tile)
 {
 	_tcol "$2"
 	if tuish_vmove "$1" "$_termcol"
-	then _tile_at "$1" "$2"; _emit_tile "$_tile"; fi
+	then
+		_tile_at "$1" "$2"; _tile_glyph "$_tile"
+		if test "$_tile_want" = none
+		then tuish_print "$_tile_glyph"
+		else
+			tuish_fg_seq "$_tile_want"; local _pc="$TUISH_SEQ"
+			tuish_sgr_reset_seq
+			tuish_print "${_pc}${_tile_glyph}${TUISH_SEQ}"
+		fi
+	fi
 	return 0
 }
 
+# Paint a whole map row as ONE string with run-length colour, emitted in a
+# single tuish_print — instead of a tuish_fg/tuish_print/tuish_sgr_reset per
+# cell. The row's cells are read from one tuish_buf_get (not one eval per cell),
+# and an SGR sequence is appended only when the colour CHANGES from the previous
+# cell. Cursor auto-advances across the wide glyphs from the single vmove, same
+# as before. This is the game's hot path; see the batched-render note in term.sh.
 _paint_row ()   # $1 row
 {
-	local _c
 	if tuish_vmove "$1" 1
 	then
-		_c=1
+		tuish_buf_get map "$1"
+		local _line="$TUISH_BLINE"
+		local _c=1 _ch _cur=-1 _row=''
 		while test "$_c" -le "$_map_cols"
-		do _tile_at "$1" "$_c"; _emit_tile "$_tile"; _c=$(( _c + 1 )); done
+		do
+			_ch="${_line:$(( _c - 1 )):1}"
+			test -z "$_ch" && _ch=' '
+			_tile_glyph "$_ch"
+			if test "$_tile_want" != "$_cur"
+			then
+				if test "$_tile_want" = none
+				then tuish_sgr_reset_seq
+				else tuish_fg_seq "$_tile_want"
+				fi
+				_row="${_row}${TUISH_SEQ}"
+				_cur=$_tile_want
+			fi
+			_row="${_row}${_tile_glyph}"
+			_c=$(( _c + 1 ))
+		done
+		# Close any open colour so sprites drawn afterward are not tinted.
+		if test "$_cur" != none && test "$_cur" != -1
+		then tuish_sgr_reset_seq; _row="${_row}${TUISH_SEQ}"; fi
+		tuish_print "$_row"
 	fi
 	return 0
 }
@@ -506,7 +544,9 @@ _paint_row ()   # $1 row
 _draw_at ()  # $1 row $2 tile-col $3 sprite  (single-glyph guarded draw)
 {
 	_tcol "$2"
-	tuish_print_at "$1" "$_termcol" "$3"
+	# Sprites are exactly one tile (TW cols) wide and drawn inside the fitted
+	# board, so no width-clip is needed — tuish_put_at skips tuish_str_width.
+	tuish_put_at "$1" "$_termcol" "$3"
 	return 0
 }
 

@@ -133,6 +133,14 @@ tuish_text ()
 	then tuish_sgr_reset; fi
 }
 tuish_print_at ()       { tuish_text "$1" "$2" "$3"; }
+# Place TEXT at (ROW,COL) with NO display-width computation — position (clipping
+# off-screen cells via tuish_vmove) then print. tuish_print_at/tuish_text run
+# tuish_str_width to width-clip against the viewport edge, which on the shell-WASM
+# target is a real per-call cost; when the caller already KNOWS the text fits its
+# cell (a fixed-size sprite/glyph, a pre-clipped slice), tuish_put_at skips that
+# entirely. Contract: caller guarantees TEXT fits — no right-edge trimming. Text
+# is still escaped by tuish_print, so any embedded *_seq sequences pass through.
+tuish_put_at ()         { if tuish_vmove "$1" "$2"; then tuish_print "$3"; fi; }
 # Raw-write analog of tuish_print_at: position then emit TEXT verbatim, skipping
 # the write (and emitting nothing) when the cell is clipped off-screen. Lets the
 # draw primitives share one clip-guarded write instead of hand-copying the
@@ -212,7 +220,38 @@ tuish_bg ()             { _tuish_color_params bg "$1"; _tuish_write "\033[${_tui
 # Combined style: tuish_style [bold] [dim] [italic] [underline] [reverse] [fg=N] [bg=N]
 # Emits a single SGR reset + combined sequence. Color accepts 0-7 (basic),
 # 8-15 (bright), 16-255 (256-palette), or R:G:B (truecolor).
-tuish_style ()
+# Thin writer over tuish_style_seq (below) so the attribute grammar lives in
+# exactly one place; the raw-ESC TUISH_SEQ passes through _tuish_write's
+# printf/echo -ne unchanged (same as tuish_save_cursor's raw ESC in tui.sh).
+tuish_style ()          { tuish_style_seq "$@"; _tuish_write "$TUISH_SEQ"; }
+
+# ─── Sequence builders (batched, one-write rendering) ────────────
+# These build an SGR escape INTO the variable TUISH_SEQ instead of writing it.
+# A caller can then assemble a whole row (or segment) as ONE string —
+# `row="${row}${TUISH_SEQ}${glyph}"` — and emit it with a single tuish_print,
+# spending a *_seq call only when the colour/style CHANGES rather than one
+# tuish_fg/tuish_sgr call per cell. On the shell-WASM target (and any slow
+# interpreter) the per-frame function-call count is the dominant render cost,
+# so this is 3-4x faster for dense output than the per-cell writers.
+#
+# CRUCIAL: the sequence is built from the LITERAL ESC byte (_tuish_chr_27,
+# populated at ord.sh source time), NOT the string '\033'. A raw-ESC sequence
+# contains no backslash and no '%', so it survives BOTH tuish_print's
+# backslash/percent doubling (see tuish_print) AND _tuish_out's printf/echo
+# verbatim — which is what lets it be embedded inside a row string that also
+# carries arbitrary %/backslash-bearing text (e.g. an editor line). Building it
+# with '\033' would get double-escaped and render literally. Same rationale as
+# tuish_save_cursor's raw-ESC use (tui.sh). Colour grammar stays single-sourced
+# in _tuish_color_params; the hot per-cell writers (tuish_fg/tuish_sgr/...)
+# keep their direct one-call bodies, while tuish_style (above) — a cold,
+# multi-arg convenience — delegates to tuish_style_seq to avoid duplicating
+# the attribute grammar.
+TUISH_SEQ=''
+tuish_fg_seq ()         { _tuish_color_params fg "$1"; TUISH_SEQ="${_tuish_chr_27}[${_tuish_cparams}m"; }
+tuish_bg_seq ()         { _tuish_color_params bg "$1"; TUISH_SEQ="${_tuish_chr_27}[${_tuish_cparams}m"; }
+tuish_sgr_seq ()        { TUISH_SEQ="${_tuish_chr_27}[${1}m"; }
+tuish_sgr_reset_seq ()  { TUISH_SEQ="${_tuish_chr_27}[0m"; }
+tuish_style_seq ()
 {
 	local _s_seq='0'
 	local _s_fg='' _s_bg=''
@@ -232,7 +271,7 @@ tuish_style ()
 	done
 	if test -n "$_s_fg"; then _tuish_color_params fg "$_s_fg"; _s_seq="${_s_seq};${_tuish_cparams}"; fi
 	if test -n "$_s_bg"; then _tuish_color_params bg "$_s_bg"; _s_seq="${_s_seq};${_tuish_cparams}"; fi
-	_tuish_write "\033[${_s_seq}m"
+	TUISH_SEQ="${_tuish_chr_27}[${_s_seq}m"
 }
 
 # Cursor shape (DECSCUSR): 0=default 1=blink-block 2=block 3=blink-underline 4=underline 5=blink-bar 6=bar
