@@ -160,7 +160,7 @@ _tuish_cursor_abs_row=0
 _tuish_cursor_vrow=0
 _tuish_cursor_vcol=0
 TUISH_PROTOCOL=''
-TUISH_TIMING=''
+TUISH_TIMING="${TUISH_TIMING:-}"   # preserve a launcher-declared value (fast-path)
 TUISH_TABSIZE="${TUISH_TABSIZE:-4}"
 TUISH_FINI_OFFSET="${TUISH_FINI_OFFSET:-0}"
 TUISH_MOUSE_ABS_Y=0
@@ -220,9 +220,25 @@ _tuish_canvas_c=1
 tuish_update_size ()
 {
 	local _ts
-	_ts="$(stty size)"
-	TUISH_LINES="${_ts% *}"
-	TUISH_COLUMNS="${_ts#* }"
+	_ts="$(stty size 2>/dev/null)"
+	# `stty size` returns "ROWS COLS" on a normal tty, but some WASIX/browser ttys
+	# report nothing (no TIOCGWINSZ), leaving both fields empty. Empty values then
+	# feed the many unquoted numeric tests downstream (the tab-stop loop below,
+	# viewport.sh, …) as `test -lt` with a missing operand — "argument expected",
+	# and init collapses. Guard it: only accept a real "<int> <int>", else fall
+	# back to $LINES/$COLUMNS (a launcher can export the terminal's real size) and
+	# finally a sane 24x80. Native is unaffected (stty size matches the first arm).
+	case "$_ts" in
+		*[0-9]" "[0-9]*)
+			TUISH_LINES="${_ts%% *}"
+			TUISH_COLUMNS="${_ts##* }" ;;
+		*)
+			TUISH_LINES="${LINES:-24}"
+			TUISH_COLUMNS="${COLUMNS:-80}" ;;
+	esac
+	# Never leave a non-numeric value in place.
+	case "$TUISH_LINES"   in ''|*[!0-9]*) TUISH_LINES=24;;   esac
+	case "$TUISH_COLUMNS" in ''|*[!0-9]*) TUISH_COLUMNS=80;;  esac
 }
 
 # ─── Timeout parsing ─────────────────────────────────────────────────
@@ -251,8 +267,14 @@ _tuish_timeout_us ()
 # if the shell supports neither read -k (zsh) nor read -n (bash/ksh/busybox).
 _tuish_init_io ()
 {
-	# Detect byte-reading capability
-	if { echo 1 | read -s -k1 -u0 2>/dev/null ;}
+	# Detect byte-reading capability. Both probes are fed from a heredoc (fd 9),
+	# NOT a pipe: a pipe forks a subshell, and on fork-constrained runtimes
+	# (browser/WASIX wasm, where fork is stubbed) that aborts init before raw
+	# mode. A heredoc's data is in place with no fork, and detection is identical
+	# (does the shell accept read -k / read -n). Native behaviour is unchanged.
+	if { read -s -k1 -u9 2>/dev/null ;} 9<<'_TUISH_RK'
+1
+_TUISH_RK
 	then
 		_tuish_get_byte ()
 		{
@@ -278,7 +300,9 @@ _tuish_init_io ()
 		# zsh read -t0 reads a byte when one is available (unlike bash which
 		# only checks). One call is enough to peek at the next pending byte.
 		_tuish_peek_byte () { _tuish_get_byte -t0; }
-	elif { echo 1 | read -r -t'0.1' -n 1 2>/dev/null ;}
+	elif { read -r -t'0.1' -n 1 -u9 2>/dev/null ;} 9<<'_TUISH_RN'
+1
+_TUISH_RN
 	then
 		_tuish_get_byte ()
 		{
@@ -309,8 +333,8 @@ _tuish_init_io ()
 			# the way a pipeline would. (Stable: both report no data, so
 			# both take the two-read consume path.)
 			_tuish_probe=''
-			if { IFS= read -r -d '' -n 1 -t0 _tuish_probe 2>/dev/null &&
-				test -n "${_tuish_probe}" ;} <<_tuish_heredoc
+			if { IFS= read -r -d '' -n 1 -t0 -u9 _tuish_probe 2>/dev/null &&
+				test -n "${_tuish_probe}" ;} 9<<_tuish_heredoc
 1
 _tuish_heredoc
 			then
@@ -330,13 +354,19 @@ _tuish_heredoc
 # idle-chunk count from TUISH_IDLE_TIMEOUT.
 _tuish_init_timing ()
 {
-	# Detect timeout resolution
-	TUISH_TIMING='second'
-	if { echo 1 | read -r -t'0.01' -n 1 2>/dev/null ;} ||
-	   { echo 1 | read -r -t'0.01' -k1 -u0 2>/dev/null ;}
-	then
-		TUISH_TIMING='sub'
-	fi
+	# Detect timeout resolution — whether `read -t` honors sub-second values. A
+	# launcher can declare it (TUISH_TIMING=sub|second) to skip these two extra
+	# pipe-forks; unset falls through to the probe, so native behaviour is unchanged.
+	case "${TUISH_TIMING:-}" in
+		sub|second) : ;;
+		*)
+			TUISH_TIMING='second'
+			if { echo 1 | read -r -t'0.01' -n 1 2>/dev/null ;} ||
+			   { echo 1 | read -r -t'0.01' -k1 -u0 2>/dev/null ;}
+			then
+				TUISH_TIMING='sub'
+			fi ;;
+	esac
 
 	_tuish_esc_timeout="-t${TUISH_ESC_TIMEOUT:-0.02}"
 	_tuish_idle_timeout="-t${TUISH_IDLE_TIMEOUT:-0.26}"
@@ -407,7 +437,7 @@ _tuish_init_term ()
 	tuish_update_size
 	local _newx=0 _newy=0
 	_tuish_write '\033[6n\r'
-	IFS='[;' read -r -d R _ _newx _newy 2>/dev/null || :
+	IFS='[;' read -r -d R -t0.3 _ _newx _newy 2>/dev/null || :
 	TUISH_INIT_ROW=$_newx
 
 	# Focus events (mouse tracking is off by default; use tuish_mouse_on)
