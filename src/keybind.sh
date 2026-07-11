@@ -51,23 +51,33 @@ _tuish_kb_sanitize ()
 _tuish_kb_sanitize '*'
 _tuish_kb_star="$_tuish_kb_key"
 
+# The bind table is per-context: an active-context prefix isolates each app's
+# bindings so two apps coexisting in one process cannot collide. The root context
+# keeps the empty prefix, so its keys are byte-identical to the flat table.
+# _tuish_kb_keys tracks the sanitized keys bound in the active context, so
+# tuish_ctx_destroy can unset them deterministically (shell cannot unset by glob).
+_tuish_kb_ns=''
+_tuish_kb_keys=''
+command -v tuish_ctx_register >/dev/null 2>&1 && tuish_ctx_register _tuish_kb_ns _tuish_kb_keys
+
 tuish_bind ()
 {
 	_tuish_kb_sanitize "$1"
-	eval "_tuish_kb_${_tuish_kb_key}=\"\$2\""
+	eval "_tuish_kb_${_tuish_kb_ns}${_tuish_kb_key}=\"\$2\""
+	_tuish_kb_keys="${_tuish_kb_keys} ${_tuish_kb_key}"
 }
 
 tuish_unbind ()
 {
 	_tuish_kb_sanitize "$1"
-	eval "unset _tuish_kb_${_tuish_kb_key}"
+	eval "unset _tuish_kb_${_tuish_kb_ns}${_tuish_kb_key}"
 }
 
 tuish_dispatch ()
 {
 	# Exact match
 	_tuish_kb_sanitize "$TUISH_EVENT"
-	eval "local _d_action=\"\${_tuish_kb_${_tuish_kb_key}:-}\""
+	eval "local _d_action=\"\${_tuish_kb_${_tuish_kb_ns}${_tuish_kb_key}:-}\""
 	if test -n "$_d_action"; then eval "$_d_action"; return 0; fi
 
 	# Glob prefix: a "char *" binding matches any "char X"
@@ -75,12 +85,12 @@ tuish_dispatch ()
 	if test "$_d_prefix" != "$TUISH_EVENT"
 	then
 		_tuish_kb_sanitize "${_d_prefix} *"
-		eval "_d_action=\"\${_tuish_kb_${_tuish_kb_key}:-}\""
+		eval "_d_action=\"\${_tuish_kb_${_tuish_kb_ns}${_tuish_kb_key}:-}\""
 		if test -n "$_d_action"; then eval "$_d_action"; return 0; fi
 	fi
 
 	# Wildcard catch-all "*"
-	eval "_d_action=\"\${_tuish_kb_${_tuish_kb_star}:-}\""
+	eval "_d_action=\"\${_tuish_kb_${_tuish_kb_ns}${_tuish_kb_star}:-}\""
 	if test -n "$_d_action"; then eval "$_d_action"; return 0; fi
 
 	return 1

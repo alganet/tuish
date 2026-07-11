@@ -37,6 +37,13 @@ _tuish_view_grow_phase=0
 _tuish_view_grow_count=0
 _tuish_resize_cursor_row=0
 
+# Viewport geometry is per-context. (_tuish_resize_cursor_row and the relayout
+# out-vars below are transient scratch consumed within one call — device-global.)
+tuish_ctx_register \
+	_tuish_view_max _tuish_view_origin _tuish_view_anchor \
+	_tuish_view_saved_origin _tuish_view_saved_anchor _tuish_view_altscreen \
+	_tuish_view_phys _tuish_view_grow_phase _tuish_view_grow_count
+
 # Outputs of _tuish_viewport_relayout / _tuish_grow_pin_origin (set before read;
 # defaulted here for set -u). sr_top=0 means "no repair / no scroll region".
 _tuish_relayout_rf=0
@@ -341,6 +348,28 @@ tuish_viewport ()
 	local _new_mode="$1"
 	local _new_max="${2:-$_tuish_view_max}"
 
+	# Hosted: the viewport IS the region the host handed us, whatever mode the app
+	# asks for. The mode distinctions (alt-screen / inline / grow) are about how an
+	# app relates to the terminal's scrollback — meaningless for a sub-region. So
+	# every mode maps to "fill my region"; no alt-screen, no scroll region, clear
+	# only the region. This is what makes a full-screen example run unchanged
+	# inside a host's content pane.
+	if test "${_tuish_hosted:-0}" -eq 1
+	then
+		_tuish_view_mode="$_new_mode"
+		_tuish_view_max=$_new_max
+		TUISH_VIEW_MODE="$_new_mode"
+		TUISH_VIEW_TOP=$_tuish_rgn_top
+		TUISH_VIEW_LEFT=$_tuish_rgn_left
+		TUISH_VIEW_ROWS=$_tuish_rgn_rows
+		TUISH_VIEW_COLS=$_tuish_rgn_cols
+		_tuish_view_phys=$_tuish_rgn_rows
+		_tuish_view_origin=$_tuish_rgn_top
+		_tuish_tx_reset
+		tuish_clear_region 1 1 "$_tuish_rgn_cols" "$_tuish_rgn_rows"
+		return 0
+	fi
+
 	# Structural sequences must reach the terminal immediately;
 	# bypass event-loop buffering.
 	local _vp_was_buffering=$_tuish_buffering
@@ -485,6 +514,21 @@ tuish_grow ()
 
 _tuish_on_fini ()
 {
+	# Hosted: whatever mode we ran, we only ever drew inside our region and never
+	# touched the alt-screen, scroll region, or terminal scrollback. So teardown is
+	# just clearing the region (the host repaints over us on resume). No push-gap,
+	# no scroll reset, no cursor games — those are all screen-owning operations.
+	if test "${_tuish_hosted:-0}" -eq 1
+	then
+		if test -n "$_tuish_view_mode"
+		then
+			_tuish_tx_reset
+			tuish_clear_region 1 1 "$_tuish_rgn_cols" "$_tuish_rgn_rows"
+			_tuish_view_mode=''
+		fi
+		return 0
+	fi
+
 	# Compute push gap so cursor lands after the last history line.
 	if test "$_tuish_view_mode" = 'fullscreen'
 	then

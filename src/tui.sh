@@ -131,8 +131,19 @@ _tuish_esc_timeout=''
 _tuish_idle_timeout=''
 _tuish_idle_chunk='-t0.03'
 _tuish_idle_chunks=1
+_tuish_interval_s='0.26'   # the interval (seconds string) the active context runs at
+TUISH_TICK_US=16667      # idle interval in µs; real value derived at tuish_init
 _tuish_pending_byte=''
 _tuish_initialized=0
+
+# Yield-to-host on an out-of-region click (device-global; survives the context
+# switch back to the host). When a hosted app is clicked outside its region, the
+# event loop stashes the ABSOLUTE click here and quits the app's loop; the host
+# checks _tuish_yield after the app returns and re-dispatches the click itself, so
+# its surrounding UI (menus/chrome) stays clickable while an app is embedded.
+_tuish_yield=0
+_tuish_yield_x=0
+_tuish_yield_y=0
 
 # Default byte reader (overridden by tuish_init with shell-specific version)
 _tuish_get_byte () { return 1; }
@@ -175,10 +186,23 @@ TUISH_VIEW_MODE=''
 TUISH_VIEW_ROWS=0
 TUISH_VIEW_COLS=0
 TUISH_VIEW_TOP=1
+# Column origin of the viewport (0-based), mirror of TUISH_VIEW_TOP for rows.
+# 0 for the root (viewport starts at column 1); a hosted child gets the absolute
+# column of its region, so its logical column 1 lands at the region's left edge.
+TUISH_VIEW_LEFT=0
 
 _tuish_view_mode=''
 _tuish_fini_push_gap=0
 _tuish_on_fini () { :; }
+
+# Per-context APP fini handler, referenced by name (same model as the render/
+# event handlers in event.sh). An app that changes device state mid-run (cursor
+# shape, a draw backend, ...) registers its restore here; tuish_fini runs it on
+# EVERY exit path — standalone teardown, modal return, and cooperative unmount —
+# so the cleanup an app used to place after tuish_run (which a driven app never
+# reaches) has a first-class home.
+_tuish_fini_fn=''
+tuish_on_fini () { _tuish_fini_fn="$1"; }
 
 # ─── Transform state (the tuish_vmove origin/scale/clip) ─────────
 # tuish_vmove maps a logical (row,col) onto an absolute terminal cell through a
@@ -197,11 +221,21 @@ _tx_lrmax=99999
 _tx_lcmin=-99999
 _tx_lcmax=99999
 
-# Reset the transform to the viewport identity (canvas off).
+# Base clip that _tuish_tx_reset returns to (i.e. what "canvas off" means). For
+# the root this is the whole screen (the historical constants); a hosted child's
+# context seeds these to its region bounds, so its tuish_canvas_off falls back to
+# the region rather than escaping to the full terminal.
+_tuish_base_lrmin=-99999
+_tuish_base_lrmax=99999
+_tuish_base_lcmin=-99999
+_tuish_base_lcmax=99999
+
+# Reset the transform to the context's base region (canvas off).
 _tuish_tx_reset ()
 {
 	_tx_off_r=0; _tx_off_c=0; _tx_ch=1; _tx_cw=1
-	_tx_lrmin=-99999; _tx_lrmax=99999; _tx_lcmin=-99999; _tx_lcmax=99999
+	_tx_lrmin=$_tuish_base_lrmin; _tx_lrmax=$_tuish_base_lrmax
+	_tx_lcmin=$_tuish_base_lcmin; _tx_lcmax=$_tuish_base_lcmax
 }
 
 # ─── Canvas state (public flags; geometry lives in _tx_* above) ──
@@ -214,6 +248,261 @@ TUISH_CANVAS_CH=1
 _tuish_canvas_on=0
 _tuish_canvas_r=1
 _tuish_canvas_c=1
+
+# ─── Context / instance management ───────────────────────────────
+# tuish's logical state is owned by per-app CONTEXTS, so multiple apps can
+# coexist in one process (a host running another app inside a region of itself).
+# The active context's fields live in the plain working globals declared above
+# (the "registers", read on the hot paths); inactive contexts are spilled to
+# namespaced _tuish_ctx_<id>_<field> vars (the "saved frames"). A context switch
+# marshals a fixed, registered field list and happens only at modal boundaries
+# (a host entering/leaving a child) — never per byte or per frame — so the hot
+# paths pay nothing. The terminal DEVICE (stty, traps, byte reader, size,
+# protocol, ord tables) is singular and is NOT part of any context.
+
+_tuish_ctx_active=''
+_tuish_ctx_next=0
+TUISH_CTX=0
+TUISH_CTX_ROOT=0
+_tuish_ctx_parent=''
+_tuish_ctx_names=''
+
+# A context's region: the absolute terminal rectangle it draws inside. The root
+# is not hosted — its region is the whole screen (rows/cols 0 mean "use
+# TUISH_LINES/COLUMNS"). A child seeded by tuish_ctx_create_region gets _hosted=1
+# and its rectangle, so a hosted "fullscreen" fills the region instead of the
+# terminal (and never touches the alt-screen).
+_tuish_hosted=0
+_tuish_rgn_top=1
+_tuish_rgn_left=0
+_tuish_rgn_rows=0
+_tuish_rgn_cols=0
+
+# Register working vars as marshalled context fields. Each field's DEFAULT is
+# captured live from its current value, so a register call must follow the var's
+# own declaration (no default is duplicated here). Optional modules register
+# their own fields the same way; only sourced modules contribute, so the marshal
+# never references an unset var under set -u.
+tuish_ctx_register ()
+{
+	local _n
+	for _n in "$@"
+	do
+		_tuish_ctx_names="${_tuish_ctx_names} ${_n}"
+		eval "_tuish_ctx_dflt_${_n}=\$${_n}"
+	done
+}
+
+# Re-capture the default of already-registered fields from their CURRENT values.
+# Used for state that only takes its real value at device init (the idle timing):
+# after init we refresh its default so freshly-created contexts inherit the live
+# host value instead of the pre-init placeholder captured at source time.
+_tuish_ctx_recapture ()
+{
+	local _n
+	for _n in "$@"
+	do
+		eval "_tuish_ctx_dflt_${_n}=\$${_n}"
+	done
+}
+
+# Reset every registered working var to its captured default. Straight per-field
+# loop in a helper (its control var is local and dies on return) — safe under the
+# event.sh zsh loop-var invariant, which concerns tuish_run's own frame only.
+_tuish_ctx_defaults ()
+{
+	local _f
+	for _f in $_tuish_ctx_names
+	do
+		eval "${_f}=\$_tuish_ctx_dflt_${_f}"
+	done
+}
+
+# Spill the active working set into frame $1 / fill the working set from frame $1.
+_tuish_ctx_save ()
+{
+	local _f
+	for _f in $_tuish_ctx_names
+	do
+		eval "_tuish_ctx_${1}_${_f}=\$${_f}"
+	done
+}
+_tuish_ctx_load ()
+{
+	local _f
+	for _f in $_tuish_ctx_names
+	do
+		eval "${_f}=\$_tuish_ctx_${1}_${_f}"
+	done
+}
+
+# Allocate a fresh context seeded with default field values; its id lands in
+# TUISH_CTX. Does not change which context is active.
+tuish_ctx_create ()
+{
+	_tuish_ctx_next=$(( _tuish_ctx_next + 1 ))
+	TUISH_CTX=$_tuish_ctx_next
+	local _prev="$_tuish_ctx_active"
+	test -n "$_prev" && _tuish_ctx_save "$_prev"
+	_tuish_ctx_defaults
+	_tuish_ctx_parent="$_prev"
+	# Give each context its own bind-table namespace so coexisting apps can't
+	# collide. The first context (the root) keeps the empty prefix, so its keys
+	# are byte-identical to the historical flat table.
+	if test -n "${_tuish_kb_ns+x}"
+	then
+		if test "$TUISH_CTX" -eq 1
+		then _tuish_kb_ns=''
+		else _tuish_kb_ns="c${TUISH_CTX}_"
+		fi
+	fi
+	_tuish_ctx_save "$TUISH_CTX"
+	test -n "$_prev" && _tuish_ctx_load "$_prev"
+	return 0
+}
+
+# Create AND activate a child context bound to a region of the CURRENTLY ACTIVE
+# (parent) context: R C are the region's top-left in the parent's logical coords,
+# W H its size. The parent's live transform resolves the origin to absolute cells,
+# so regions compose to any depth (page > example > overlay). The child's logical
+# (1,1) is the region's top-left; its drawing clips to the region; a hosted
+# "fullscreen" fills the region. On return the id is in TUISH_CTX; the caller runs
+# the child, then tuish_ctx_activate <parent> + tuish_ctx_destroy <child>.
+tuish_ctx_create_region ()
+{
+	local _abs_r=$(( TUISH_VIEW_TOP + _tx_off_r + ($1 - 1) * _tx_ch ))
+	local _abs_c=$(( TUISH_VIEW_LEFT + _tx_off_c + ($2 - 1) * _tx_cw ))
+	tuish_ctx_create
+	tuish_ctx_activate "$TUISH_CTX"
+	TUISH_VIEW_TOP=$_abs_r
+	TUISH_VIEW_LEFT=$_abs_c
+	TUISH_VIEW_ROWS=$4
+	TUISH_VIEW_COLS=$3
+	_tuish_base_lrmin=1; _tuish_base_lrmax=$4
+	_tuish_base_lcmin=1; _tuish_base_lcmax=$3
+	_tuish_hosted=1
+	_tuish_rgn_top=$_abs_r
+	_tuish_rgn_left=$_abs_c
+	_tuish_rgn_rows=$4
+	_tuish_rgn_cols=$3
+	_tuish_tx_reset
+	return 0
+}
+
+# Make context $1 active: spill the current one, fill from $1's frame.
+tuish_ctx_activate ()
+{
+	test -n "$_tuish_ctx_active" && _tuish_ctx_save "$_tuish_ctx_active"
+	_tuish_ctx_load "$1"
+	_tuish_ctx_active="$1"
+}
+
+# Spill and detach the active context (leaves no context active).
+tuish_ctx_deactivate ()
+{
+	test -n "$_tuish_ctx_active" && _tuish_ctx_save "$_tuish_ctx_active"
+	_tuish_ctx_active=''
+}
+
+# Destroy context $1: free its bindings, then unset its saved frame.
+tuish_ctx_destroy ()
+{
+	# Bindings first, while the frame still holds the context's namespace and its
+	# list of bound keys (shell cannot unset by glob, so we unset each explicitly).
+	local _ns='' _keys='' _k
+	eval "_ns=\${_tuish_ctx_${1}__tuish_kb_ns:-}"
+	eval "_keys=\${_tuish_ctx_${1}__tuish_kb_keys:-}"
+	for _k in $_keys
+	do
+		eval "unset _tuish_kb_${_ns}${_k} 2>/dev/null" || :
+	done
+
+	local _f
+	for _f in $_tuish_ctx_names
+	do
+		eval "unset _tuish_ctx_${1}_${_f} 2>/dev/null" || :
+	done
+}
+
+# ─── Cooperative driving (non-modal hosting) ─────────────────────
+# A host keeps its single tuish_run loop and DRIVES mounted children one event at
+# a time, instead of each child running its own (blocking) tuish_run. When a child
+# context is active the whole event pipeline already targets it — hid.sh decodes
+# mouse into the child's region-local frame, tuish_dispatch uses the child's bind
+# table, and the render path calls the child's handler — so driving a child is just
+# "activate it, feed it the raw event, restore the host". Modal hosting (the child
+# owning a nested tuish_run) still works; this is the alternative for live host
+# chrome + simultaneous widgets.
+
+# Drive mounted child $1 with the event currently decoded in the active (host)
+# context: TUISH_RAW holds the raw descriptor (event.sh:_tuish_parse_event), which
+# the child re-resolves in its own region and dispatches/renders. Buffering and the
+# redraw scheduler are per-context registers, so the child's tuish_begin/end and
+# rAF render stay isolated from the host's. Requires event.sh (a cooperative host
+# always sources it). No loop variable here — the zsh loop-var invariant is intact.
+tuish_ctx_dispatch ()
+{
+	local _host=$_tuish_ctx_active _raw=$TUISH_RAW
+	tuish_ctx_activate "$1"
+	_tuish_parse_event "$_raw"
+	tuish_ctx_activate "$_host"
+}
+
+# Mount a child in a region and run its (non-blocking) setup, leaving the host
+# active. $1..$4 = region R C W H in the host's logical coords; $5 = the child's
+# setup function (everything an example's _main does EXCEPT tuish_run/tuish_fini);
+# $6.. = extra args passed to it. On return the child id is in TUISH_CTX and the
+# child's chosen idle interval (seconds, for the host to adopt on its loop) is in
+# TUISH_MOUNT_INTERVAL. The child's setup calls tuish_init, which adopts the context
+# created here (device already up), so the example is unchanged.
+TUISH_MOUNT_INTERVAL=''
+tuish_ctx_mount ()
+{
+	local _r=$1 _c=$2 _w=$3 _h=$4 _fn=$5
+	shift 5
+	local _host=$_tuish_ctx_active
+	tuish_ctx_create_region "$_r" "$_c" "$_w" "$_h"
+	local _child=$TUISH_CTX
+	"$_fn" "$@"
+	TUISH_MOUNT_INTERVAL="$_tuish_interval_s"
+	# Bootstrap idle: the exact first event tuish_run gives a standalone app, so
+	# an idle-first app (one that paints on its first idle) renders NOW, at mount,
+	# instead of waiting for the host's next idle tick. The child is still active,
+	# so the paint lands in its region.
+	_tuish_parse_event "F"
+	tuish_ctx_activate "$_host"
+	TUISH_CTX=$_child
+	return 0
+}
+
+# Unmount a mounted child: fold its viewport and drop its context, resuming the
+# host. tuish_fini's nested-child branch does exactly this (it never touches the
+# shared device), and reactivates the parent (the host) on return.
+tuish_ctx_unmount ()
+{
+	tuish_ctx_activate "$1"
+	tuish_fini
+}
+
+# Register the base (tui.sh) context fields. Optional modules add their own.
+tuish_ctx_register \
+	_tuish_quit _tuish_quit_mode \
+	_tuish_buf _tuish_buffering \
+	_tx_off_r _tx_off_c _tx_ch _tx_cw \
+	_tx_lrmin _tx_lrmax _tx_lcmin _tx_lcmax \
+	TUISH_VIEW_MODE TUISH_VIEW_ROWS TUISH_VIEW_COLS TUISH_VIEW_TOP TUISH_VIEW_LEFT \
+	_tuish_base_lrmin _tuish_base_lrmax _tuish_base_lcmin _tuish_base_lcmax \
+	_tuish_view_mode _tuish_fini_push_gap TUISH_FINI_OFFSET _tuish_fini_fn \
+	TUISH_CANVAS TUISH_CANVAS_W TUISH_CANVAS_H TUISH_CANVAS_CW TUISH_CANVAS_CH \
+	_tuish_canvas_on _tuish_canvas_r _tuish_canvas_c \
+	_tuish_mouse _tuish_detailed _tuish_modkeys _tuish_wrap \
+	_tuish_cursor_abs_row _tuish_cursor_vrow _tuish_cursor_vcol \
+	TUISH_EVENT TUISH_EVENT_KIND TUISH_RAW \
+	TUISH_MOUSE_X TUISH_MOUSE_Y TUISH_MOUSE_ABS_Y \
+	_tuish_hosted _tuish_rgn_top _tuish_rgn_left _tuish_rgn_rows _tuish_rgn_cols \
+	_tuish_idle_timeout _tuish_idle_chunk _tuish_idle_chunks TUISH_TICK_US \
+	_tuish_interval_s \
+	_tuish_ctx_parent
 
 # ─── Size management ────────────────────────────────────────────────
 
@@ -350,6 +639,52 @@ _tuish_heredoc
 	return 0
 }
 
+# Derive the idle timeout, the zsh idle-chunk count, and TUISH_TICK_US (the µs
+# per idle tick, used as the time-based-animation clock) from $1 (interval in
+# seconds; empty = the timing-based default) and the already-detected
+# TUISH_TIMING. Split out of _tuish_init_timing so it can be re-run at runtime by
+# tuish_idle_interval — these values are per-context, so a hosted app can pick its
+# own tick rate without disturbing its host. Takes the interval as a PARAMETER:
+# TUISH_IDLE_TIMEOUT is pure launcher config, read once at init and never written
+# by the framework (writing it back leaked one context's tick choice into the
+# `${TUISH_IDLE_TIMEOUT:-...}` defaults of apps mounted later).
+_tuish_derive_idle ()
+{
+	local _default='0.26'
+	test "$TUISH_TIMING" = 'second' && _default='1'
+	_tuish_interval_s="${1:-$_default}"
+	_tuish_idle_timeout="-t${_tuish_interval_s}"
+
+	# The idle interval in microseconds: the wall-time one idle tick spans.
+	_tuish_timeout_us "$_tuish_interval_s"
+	TUISH_TICK_US=$_tuish_tick_us
+
+	# Chunked idle wait (zsh): poll in slices of at most 30ms up to the full
+	# timeout so the idle interval tracks TUISH_IDLE_TIMEOUT. One read when it is
+	# already <=30ms; otherwise ceil(timeout/30ms) slices of 30ms.
+	_tuish_idle_chunk="$_tuish_idle_timeout"
+	_tuish_idle_chunks=1
+	if test "$TUISH_TIMING" != 'second'
+	then
+		local _itms=$(( TUISH_TICK_US / 1000 ))
+		if test "$_itms" -gt 30
+		then
+			_tuish_idle_chunk='-t0.03'
+			_tuish_idle_chunks=$(( (_itms + 29) / 30 ))
+		fi
+	fi
+}
+
+# Change the idle interval (the animation/tick clock) at runtime for the ACTIVE
+# context — e.g. a hosted real-time app that wants a fast tick regardless of its
+# host's. Per-context, so it is restored to the host's on return. SECS is a
+# seconds value like 0.02 (sub-second needs a sub-timing terminal). Never touches
+# TUISH_IDLE_TIMEOUT — that is launcher config, not state.
+tuish_idle_interval ()
+{
+	_tuish_derive_idle "$1"
+}
+
 # Detect the timer resolution and derive the escape/idle timeouts and the zsh
 # idle-chunk count from TUISH_IDLE_TIMEOUT.
 _tuish_init_timing ()
@@ -369,35 +704,8 @@ _tuish_init_timing ()
 	esac
 
 	_tuish_esc_timeout="-t${TUISH_ESC_TIMEOUT:-0.02}"
-	_tuish_idle_timeout="-t${TUISH_IDLE_TIMEOUT:-0.26}"
-	_tuish_idle_default='0.26'
-	if test "$TUISH_TIMING" = 'second'
-	then
-		_tuish_esc_timeout="-t${TUISH_ESC_TIMEOUT:-1}"
-		_tuish_idle_timeout="-t${TUISH_IDLE_TIMEOUT:-1}"
-		_tuish_idle_default='1'
-	fi
-
-	# The idle interval in microseconds: the wall-time one idle tick spans, for
-	# time-based animation. Single source for the zsh idle-chunk math below.
-	_tuish_timeout_us "${TUISH_IDLE_TIMEOUT:-$_tuish_idle_default}"
-	TUISH_TICK_US=$_tuish_tick_us
-
-	# Chunked idle wait (zsh): poll in slices of at most 30ms up to the full
-	# idle timeout, so the idle interval tracks TUISH_IDLE_TIMEOUT. One read of
-	# the whole timeout when it's already <=30ms; otherwise ceil(timeout/30ms)
-	# slices of 30ms (default 0.26s -> 9 slices, the historical interval).
-	_tuish_idle_chunk="$_tuish_idle_timeout"
-	_tuish_idle_chunks=1
-	if test "$TUISH_TIMING" != 'second'
-	then
-		_itms=$(( TUISH_TICK_US / 1000 ))
-		if test "$_itms" -gt 30
-		then
-			_tuish_idle_chunk='-t0.03'
-			_tuish_idle_chunks=$(( (_itms + 29) / 30 ))
-		fi
-	fi
+	test "$TUISH_TIMING" = 'second' && _tuish_esc_timeout="-t${TUISH_ESC_TIMEOUT:-1}"
+	_tuish_derive_idle "${TUISH_IDLE_TIMEOUT:-}"
 	return 0
 }
 
@@ -458,15 +766,59 @@ _tuish_init_term ()
 	_tuish_write '\r'
 }
 
-tuish_init ()
+# Bring up the shared terminal DEVICE (raw mode, timing, setup sequences). Runs
+# exactly once per process; nested apps skip it (the device is already up).
+_tuish_device_init ()
 {
 	_tuish_init_io || return 1
 	_tuish_init_timing
 	_tuish_init_term
 }
 
+tuish_init ()
+{
+	if test "$_tuish_initialized" -eq 1
+	then
+		# Device already up — we are nested inside a host. Adopt the context the
+		# host activated for us; create+activate one if the host did not.
+		if test -z "$_tuish_ctx_active"
+		then
+			tuish_ctx_create
+			tuish_ctx_activate "$TUISH_CTX"
+		fi
+		return 0
+	fi
+	_tuish_device_init || return 1
+	# The idle timing only takes its real value here, in device init. Refresh its
+	# registered defaults so contexts created later inherit the live host tick
+	# (not the source-time placeholder), then build the root context from them.
+	_tuish_ctx_recapture _tuish_idle_timeout _tuish_idle_chunk _tuish_idle_chunks TUISH_TICK_US _tuish_interval_s
+	tuish_ctx_create
+	TUISH_CTX_ROOT=$TUISH_CTX
+	tuish_ctx_activate "$TUISH_CTX_ROOT"
+	return 0
+}
+
 tuish_fini ()
 {
+	# Nested child: fold only its own viewport, drop its context, and resume the
+	# parent. The shared device (stty/traps) stays up for the host — a child must
+	# never restore the terminal out from under its host.
+	if test -n "$_tuish_ctx_active" && test "$_tuish_ctx_active" != "$TUISH_CTX_ROOT"
+	then
+		_tuish_buffering=0
+		_tuish_buf=''
+		# The app's own registered cleanup (device state it changed: cursor
+		# shape, ...) — the code after a driven app's tuish_run never runs, so
+		# this is its one reliable teardown point.
+		test -n "$_tuish_fini_fn" && { "$_tuish_fini_fn" || :; }
+		_tuish_on_fini
+		local _cur="$_tuish_ctx_active" _p="$_tuish_ctx_parent"
+		test -n "$_p" && tuish_ctx_activate "$_p"
+		tuish_ctx_destroy "$_cur"
+		return 0
+	fi
+
 	# Idempotent: safe to call from both explicit call and EXIT trap
 	test "$_tuish_initialized" -eq 0 && return 0
 	_tuish_initialized=0
@@ -480,7 +832,8 @@ tuish_fini ()
 	# Hide cursor during cleanup to avoid flicker
 	tuish_hide_cursor
 
-	# Viewport teardown
+	# The app's registered cleanup, then the viewport teardown.
+	test -n "${_tuish_fini_fn:-}" && { "$_tuish_fini_fn" || :; }
 	_tuish_fini_push_gap=0
 	_tuish_on_fini
 
@@ -542,5 +895,12 @@ tuish_fini ()
 		test $_tuish_fini_push_gap -gt 0 && _tuish_write '\n' || :
 	else
 		_tuish_write '\r\033[2K'
+	fi
+
+	# Drop the root context now that the device is down.
+	if test -n "$_tuish_ctx_active"
+	then
+		tuish_ctx_destroy "$_tuish_ctx_active"
+		_tuish_ctx_active=''
 	fi
 }

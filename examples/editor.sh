@@ -7,18 +7,27 @@
 # editor.sh - CUA-like text editor using tui.sh
 # Ctrl+W to exit.
 
-_dir="$(cd "$(dirname "$0")" && pwd)"
-_tuish_src_dir="${_dir}/../src"
-. "${_tuish_src_dir}/compat.sh"
-. "${_tuish_src_dir}/ord.sh"
-. "${_tuish_src_dir}/tui.sh"
-. "${_tuish_src_dir}/term.sh"
-. "${_tuish_src_dir}/event.sh"
-. "${_tuish_src_dir}/hid.sh"
-. "${_tuish_src_dir}/viewport.sh"
-. "${_tuish_src_dir}/str.sh"
-. "${_tuish_src_dir}/buf.sh"
-. "${_tuish_src_dir}/keybind.sh"
+# Dual-mode: standalone (`sh examples/editor.sh [file]`) or embedded (a host sources
+# it and calls _ed_main in a region). It registers its render/event handlers by
+# name — never redefining the global hooks — so it composes with a host cleanly.
+if test -z "${_tuish_tui_loaded:-}"
+then
+	_ed_standalone=1
+	_dir="$(cd "$(dirname "$0")" && pwd)"
+	_tuish_src_dir="${_dir}/../src"
+	. "${_tuish_src_dir}/compat.sh"
+	. "${_tuish_src_dir}/ord.sh"
+	. "${_tuish_src_dir}/tui.sh"
+	. "${_tuish_src_dir}/term.sh"
+	. "${_tuish_src_dir}/event.sh"
+	. "${_tuish_src_dir}/hid.sh"
+	. "${_tuish_src_dir}/viewport.sh"
+	. "${_tuish_src_dir}/str.sh"
+	. "${_tuish_src_dir}/buf.sh"
+	. "${_tuish_src_dir}/keybind.sh"
+else
+	_ed_standalone=0
+fi
 
 # ─── Editor state ───────────────────────────────────────────────────
 
@@ -424,9 +433,13 @@ _ed_click ()
 {
 	_clear_sel
 	_cur_row=$((_view_top + TUISH_MOUSE_Y - 1))
-	_col_to_char $((_view_left + TUISH_MOUSE_X - 1))
+	# Clamp the row to the buffer BEFORE _col_to_char, which reads that line: a
+	# click below the last line (e.g. empty space) would otherwise index an unbound
+	# buffer var under set -u and abort. Matters in a region host, where clicking
+	# the editor's empty area is common.
 	test $_cur_row -lt 1 && _cur_row=1
 	test $_cur_row -gt $TUISH_BUF_COUNT && _cur_row=$TUISH_BUF_COUNT
+	_col_to_char $((_view_left + TUISH_MOUSE_X - 1))
 	_clamp_col
 }
 
@@ -684,7 +697,7 @@ _render_clipped_line ()
 	tuish_print "$TUISH_SWINDOW"
 }
 
-_render ()
+_ed_render ()
 {
 	tuish_hide_cursor
 	_sel_bounds
@@ -941,7 +954,7 @@ _ed_setup_bindings ()
 
 # ─── Event handler ──────────────────────────────────────────────────
 
-tuish_on_event ()
+_ed_on_event ()
 {
 	_status_msg=''
 	local _prev_row=$_cur_row
@@ -958,11 +971,11 @@ tuish_on_event ()
 	fi
 }
 
-tuish_on_redraw ()
+_ed_on_redraw ()
 {
 	if test "$1" -eq -1
 	then
-		_render
+		_ed_render
 	elif test "$1" -ge 2
 	then
 		_render_line $_cur_row
@@ -976,18 +989,33 @@ tuish_on_redraw ()
 
 # ─── Main ───────────────────────────────────────────────────────────
 
-_editor_main ()
+# Entry point. Standalone the bootstrap below calls it; hosted, the host calls it
+# after tuish_ctx_create_region has made our region the active context.
+# Setup (everything but the event loop), split out so a cooperative host can mount
+# and drive the editor from its own loop. Takes an optional file path in $1, like
+# _ed_main. Standalone (and the cursor-shape restore) stay in _ed_main below.
+_ed_setup ()
 {
+	# Fresh state each launch (a host may run us more than once).
+	_cur_row=1; _cur_col=1; _cur_dcol=0
+	_view_top=1; _view_left=0
+	_sel_row=0; _sel_col=0; _status_msg=''
+
 	tuish_init
 	tuish_cursor_shape 6          # steady bar cursor
 	tuish_mouse_on
 
+	# Register render/event handlers BY NAME (not by redefining the global hooks),
+	# so hosting composes: our handlers live in our context, the host keeps its own.
+	tuish_on_event  _ed_on_event
+	tuish_on_redraw _ed_on_redraw
+	tuish_on_fini   _ed_fini      # restore the cursor on ANY exit path (incl. unmount)
 	_ed_setup_bindings
 
 	tuish_viewport fixed 10
 
 	_view_height=$((TUISH_VIEW_ROWS - 1))
-	_view_width=$TUISH_COLUMNS
+	_view_width=$TUISH_VIEW_COLS   # region width when hosted; full width standalone
 
 	# Load file from argv or start with empty buffer
 	if test -n "${1:-}" && test -f "$1"
@@ -1002,12 +1030,22 @@ _editor_main ()
 		tuish_buf_init _
 	fi
 
-	_render
+	_ed_render
+}
 
+# The bar-cursor restore lives in the registered fini hook (not after tuish_run):
+# a cooperatively-driven editor never returns from a run of its own, but tuish_fini
+# runs the hook on every exit path — standalone, modal return, and coop unmount.
+_ed_fini () { tuish_cursor_shape 0; }
+
+_ed_main ()
+{
+	_ed_setup "${@:-}"
 	tuish_run || :
-
-	tuish_cursor_shape 0          # restore default cursor
 	tuish_fini
 }
 
-_editor_main "${@:-}"
+if test "${_ed_standalone:-0}" -eq 1
+then
+	_ed_main "${@:-}"
+fi

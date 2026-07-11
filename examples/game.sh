@@ -42,19 +42,27 @@
 # No wall clock is used — only TUISH_IDLE_TIMEOUT, which every shell's idle wait
 # now honors (zsh included), so it doubles as the per-tick dt.
 
-_game_dir="$(cd "$(dirname "$0")" && pwd)"
-_src="${_game_dir}/../src"
-. "${_src}/compat.sh"
-. "${_src}/ord.sh"
-. "${_src}/tui.sh"
-. "${_src}/term.sh"
-. "${_src}/event.sh"
-. "${_src}/hid.sh"
-. "${_src}/viewport.sh"
-. "${_src}/str.sh"
-. "${_src}/draw.sh"
-. "${_src}/keybind.sh"
-. "${_src}/buf.sh"
+# Dual-mode: standalone (`sh examples/game.sh`) or embedded (a host sources it and
+# calls _g_main in a region). Guard the bootstrap so sourcing only defines things.
+if test -z "${_tuish_tui_loaded:-}"
+then
+	_g_standalone=1
+	_game_dir="$(cd "$(dirname "$0")" && pwd)"
+	_src="${_game_dir}/../src"
+	. "${_src}/compat.sh"
+	. "${_src}/ord.sh"
+	. "${_src}/tui.sh"
+	. "${_src}/term.sh"
+	. "${_src}/event.sh"
+	. "${_src}/hid.sh"
+	. "${_src}/viewport.sh"
+	. "${_src}/str.sh"
+	. "${_src}/draw.sh"
+	. "${_src}/keybind.sh"
+	. "${_src}/buf.sh"
+else
+	_g_standalone=0
+fi
 
 # ─── Tunables ────────────────────────────────────────────────────
 # Positions are fixed-point: one tile = FP units. Velocities are tiles/SECOND
@@ -117,7 +125,7 @@ GAME_VIEW_H=14
 _room=1
 _room_count=3
 _state=play          # play | win
-_started=0
+_g_started=0
 _too_small=0
 _deaths=0
 
@@ -693,8 +701,8 @@ _render_frame ()
 _tick ()
 {
 	local _dt _sd
-	if test "$_started" -eq 0
-	then _started=1 _need_full=1; _render_frame; return 0; fi
+	if test "$_g_started" -eq 0
+	then _g_started=1 _need_full=1; _render_frame; return 0; fi
 	if test "$_too_small" -eq 1; then return 0; fi
 	# Each idle tick represents ~TICK_DT of wall-time (the read -t interval).
 	# Advance gravity by that much, in <=SUB_DT slices so a coarse interval
@@ -740,7 +748,7 @@ _tick ()
 # the tick does the moving (see _step). On the ground it takes the throttled step.
 _walk ()  # $1 = direction (-1/+1)
 {
-	if test "$_state" != 'play' || test "$_started" -ne 1 || test "$_too_small" -eq 1
+	if test "$_state" != 'play' || test "$_g_started" -ne 1 || test "$_too_small" -eq 1
 	then return 0; fi
 	_face=$1 _move_ttl=$MOVE_TTL_US
 	if test "$_grounded" -eq 0; then _air_run=$1; return 0; fi   # airborne: steer only
@@ -778,34 +786,60 @@ _on_resize ()
 _noop () { return 0; }
 _do_quit () { tuish_quit_clear; return 0; }
 
-tuish_bind 'idle'    '_tick'
-tuish_bind 'resize'  '_on_resize'
-tuish_bind 'ctrl-w'  '_do_quit'
-tuish_bind 'char r'  '_restart'
-# movement — one tap = one tile; held autorepeat is throttled to RUN_SPEED
-# tiles/sec (uniform across keyboards), with gravity ticking between steps.
-tuish_bind 'left'    '_move_left'
-tuish_bind 'char a'  '_move_left'
-tuish_bind 'right'   '_move_right'
-tuish_bind 'char d'  '_move_right'
-# jump
-tuish_bind 'up'      '_jump'
-tuish_bind 'char w'  '_jump'
-tuish_bind '*'       '_noop'
-
 # ─── Main ────────────────────────────────────────────────────────
-# Pick the idle interval — the game clock. The library honors it on every shell
-# (each idle tick waits ~this long), so it doubles as the per-tick dt, which the
-# engine exposes in microseconds as TUISH_TICK_US after tuish_init.
-TUISH_IDLE_TIMEOUT="${TUISH_IDLE_TIMEOUT:-0.02}"
-tuish_init
-# The engine parses the idle interval into TUISH_TICK_US (µs); that is our
-# per-tick dt — the wall-time one idle tick spans.
-TICK_DT=$TUISH_TICK_US
-# Render into a fixed partial slab, not the whole screen: the board and HUD live
-# in GAME_VIEW_H reserved rows; the shell scrollback above and the prompt below
-# stay live. This is a plain viewport feature — no canvas involved.
-tuish_viewport fixed "$GAME_VIEW_H"
-_load_room "$_room"
-tuish_run || :
-tuish_fini
+# Entry point. Standalone the bootstrap below calls it; hosted, the host calls it
+# after tuish_ctx_create_region has made our region the active context.
+# Setup (everything but the event loop), split out so a cooperative host can mount
+# and drive the game from its own loop. Keeps tuish_idle_interval here so a driven
+# game still requests its fast tick. Standalone uses _g_main below.
+_g_setup ()
+{
+	# Fresh game each launch (a host may run us more than once).
+	_room=1 _state=play _deaths=0 _win_shown=0
+	_g_started=0 _too_small=0 _need_full=0 _hud_dirty=0
+	_render_acc=0 _step_acc=$STEP_MIN_US
+	_face=0 _move_ttl=0 _air_run=0 _grounded=0 _coins_got=0
+
+	# Pick the idle interval — the game clock — for OUR context. Set it after init
+	# via tuish_idle_interval so it works whether we own the device (standalone) or
+	# are hosted (the device is already up, so the pre-init env var alone would be
+	# ignored and we'd inherit the host's slow tick). It is per-context, so the host
+	# gets its own tick back when we return. TUISH_TICK_US is our per-tick dt.
+	tuish_init
+	tuish_idle_interval "${TUISH_IDLE_TIMEOUT:-0.02}"
+	TICK_DT=$TUISH_TICK_US
+
+	# Bindings must be registered while our context is active (after tuish_init) so
+	# they land in its namespace — hence inside _g_main, not at file scope.
+	tuish_bind 'idle'    '_tick'
+	tuish_bind 'resize'  '_on_resize'
+	tuish_bind 'ctrl-w'  '_do_quit'
+	tuish_bind 'char r'  '_restart'
+	# movement — one tap = one tile; held autorepeat is throttled to RUN_SPEED
+	# tiles/sec (uniform across keyboards), with gravity ticking between steps.
+	tuish_bind 'left'    '_move_left'
+	tuish_bind 'char a'  '_move_left'
+	tuish_bind 'right'   '_move_right'
+	tuish_bind 'char d'  '_move_right'
+	# jump
+	tuish_bind 'up'      '_jump'
+	tuish_bind 'char w'  '_jump'
+	tuish_bind '*'       '_noop'
+
+	# Render into a fixed partial slab, not the whole screen: the board and HUD
+	# live in GAME_VIEW_H reserved rows. Hosted, this fills our region.
+	tuish_viewport fixed "$GAME_VIEW_H"
+	_load_room "$_room"
+}
+
+_g_main ()
+{
+	_g_setup
+	tuish_run || :
+	tuish_fini
+}
+
+if test "${_g_standalone:-0}" -eq 1
+then
+	_g_main
+fi

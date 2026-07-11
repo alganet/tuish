@@ -24,6 +24,9 @@ _tuish_hid_loaded=1
 
 _tuish_held=''
 
+# Mouse press→release tracking is per-context.
+tuish_ctx_register _tuish_held
+
 # Teardown hook called by tuish_fini (stubbed in tui.sh): turn off mouse
 # tracking if it was on, so fini need not read HID-private state directly.
 _tuish_hid_fini ()
@@ -193,8 +196,15 @@ _tuish_resolve_mouse ()   # $1=class(M|m) $2=button $3=x $4=y
 	TUISH_MOUSE_X=$3
 	TUISH_MOUSE_Y=$4
 	TUISH_MOUSE_ABS_Y=$4
+	# Report the click in the app's own coordinate system — the inverse of the
+	# tuish_vmove transform: viewport-relative row, and (now that a hosted region
+	# can be column-offset) region-relative column. For the root both origins are
+	# 1/0, so standalone coordinates are unchanged.
 	if test -n "$_tuish_view_mode"
-	then TUISH_MOUSE_Y=$(($4 - TUISH_VIEW_TOP + 1)); fi
+	then
+		TUISH_MOUSE_Y=$(($4 - TUISH_VIEW_TOP + 1))
+		TUISH_MOUSE_X=$(($3 - TUISH_VIEW_LEFT))
+	fi
 	TUISH_EVENT="$_mouse"
 }
 

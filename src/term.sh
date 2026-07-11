@@ -40,7 +40,7 @@ tuish_vmove ()
 		return 1
 	fi
 	local _abs=$(( TUISH_VIEW_TOP + _tx_off_r + ($1 - 1) * _tx_ch ))
-	local _col=$(( _tx_off_c + ($2 - 1) * _tx_cw + 1 ))
+	local _col=$(( TUISH_VIEW_LEFT + _tx_off_c + ($2 - 1) * _tx_cw + 1 ))
 	if test $_abs -gt $TUISH_LINES
 	then
 		return 1
