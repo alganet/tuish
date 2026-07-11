@@ -7,19 +7,29 @@
 # boxes.sh - Demo of draw.sh styles and composable box drawing
 # Pages: light, heavy, double, rounded, mixed (cross-style junctions).
 # n/p to switch pages, b to toggle backend, j/k to scroll, ctrl+w to exit.
+#
+# Dual-mode: runs standalone (`sh examples/boxes.sh`) or embedded inside another
+# tuish app (the host sources it and calls _bx_main inside a region). Every name
+# is _bx_-prefixed; the code never knows whether it is hosted.
 
-_dir="$(cd "$(dirname "$0")" && pwd)"
-_tuish_src_dir="${_dir}/../src"
-. "${_tuish_src_dir}/compat.sh"
-. "${_tuish_src_dir}/ord.sh"
-. "${_tuish_src_dir}/tui.sh"
-. "${_tuish_src_dir}/term.sh"
-. "${_tuish_src_dir}/event.sh"
-. "${_tuish_src_dir}/hid.sh"
-. "${_tuish_src_dir}/viewport.sh"
-. "${_tuish_src_dir}/str.sh"
-. "${_tuish_src_dir}/draw.sh"
-. "${_tuish_src_dir}/keybind.sh"
+if test -z "${_tuish_tui_loaded:-}"
+then
+	_bx_standalone=1
+	_dir="$(cd "$(dirname "$0")" && pwd)"
+	_tuish_src_dir="${_dir}/../src"
+	. "${_tuish_src_dir}/compat.sh"
+	. "${_tuish_src_dir}/ord.sh"
+	. "${_tuish_src_dir}/tui.sh"
+	. "${_tuish_src_dir}/term.sh"
+	. "${_tuish_src_dir}/event.sh"
+	. "${_tuish_src_dir}/hid.sh"
+	. "${_tuish_src_dir}/viewport.sh"
+	. "${_tuish_src_dir}/str.sh"
+	. "${_tuish_src_dir}/draw.sh"
+	. "${_tuish_src_dir}/keybind.sh"
+else
+	_bx_standalone=0
+fi
 
 # ─── State ──────────────────────────────────────────────────────
 
@@ -393,7 +403,9 @@ _bx_page_mixed ()
 _bx_redraw ()
 {
 	tuish_begin
-	tuish_clear_screen
+	# Clear our drawable area only (the whole screen standalone; just our region
+	# when hosted) so an embedding host's chrome is never wiped.
+	tuish_clear_region 1 1 "$TUISH_VIEW_COLS" "$TUISH_VIEW_ROWS"
 
 	tuish_draw_set_origin $_bx_scroll 0
 	tuish_draw_set_clip 2 $TUISH_VIEW_ROWS
@@ -481,28 +493,47 @@ _bx_idle ()
 	fi
 }
 
-# ─── Key bindings ────────────────────────────────────────────────
-
-tuish_bind 'ctrl-w'  '_bx_quit'
-tuish_bind 'idle'    '_bx_idle'
-tuish_bind 'resize'  '_bx_resize'
-tuish_bind 'char n'  '_bx_next'
-tuish_bind 'char p'  '_bx_prev'
-tuish_bind 'char b'  '_bx_toggle_backend'
-tuish_bind 'char c'  '_bx_cycle_color'
-tuish_bind 'char j'  '_bx_scroll_down'
-tuish_bind 'char k'  '_bx_scroll_up'
-tuish_bind 'down'    '_bx_scroll_down'
-tuish_bind 'up'      '_bx_scroll_up'
-
-tuish_on_redraw ()
-{
-	_bx_redraw
-}
-
 # ─── Main ────────────────────────────────────────────────────────
 
-tuish_init
-tuish_viewport fullscreen
-tuish_run || :
-tuish_fini
+# Entry point. Standalone the bootstrap below calls it; hosted, the host calls it
+# after tuish_ctx_create_region has made our region the active context. Bindings
+# and the render handler are registered here (after tuish_init) so they land in
+# whichever context is active — root standalone, the region when hosted.
+# Setup (everything but the event loop), split out so a cooperative host can mount
+# and drive boxes from its own loop. Standalone uses _bx_main below.
+_bx_setup ()
+{
+	_bx_started=no
+	_bx_scroll=0
+
+	tuish_init
+	tuish_mouse_on
+	tuish_on_redraw _bx_redraw
+	tuish_bind 'ctrl-w'  '_bx_quit'
+	tuish_bind 'idle'    '_bx_idle'
+	tuish_bind 'resize'  '_bx_resize'
+	tuish_bind 'char n'  '_bx_next'
+	tuish_bind 'char p'  '_bx_prev'
+	tuish_bind 'char b'  '_bx_toggle_backend'
+	tuish_bind 'char c'  '_bx_cycle_color'
+	tuish_bind 'char j'  '_bx_scroll_down'
+	tuish_bind 'char k'  '_bx_scroll_up'
+	tuish_bind 'down'    '_bx_scroll_down'
+	tuish_bind 'up'      '_bx_scroll_up'
+	tuish_bind 'wdown'   '_bx_scroll_down'
+	tuish_bind 'whup'    '_bx_scroll_up'
+
+	tuish_viewport fullscreen
+}
+
+_bx_main ()
+{
+	_bx_setup
+	tuish_run || :
+	tuish_fini
+}
+
+if test "${_bx_standalone:-0}" -eq 1
+then
+	_bx_main
+fi

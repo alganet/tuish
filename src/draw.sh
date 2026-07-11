@@ -47,6 +47,13 @@ _tuish_draw_clip=0
 _tuish_draw_clip_top=1
 _tuish_draw_clip_bot=9999
 
+# The draw origin/clip layer is per-context. (TUISH_DRAW_BACKEND is registered
+# below, after its source-time detection, so its captured default is the detected
+# value.)
+tuish_ctx_register \
+	_tuish_draw_origin_r _tuish_draw_origin_c _tuish_draw_clip \
+	_tuish_draw_clip_top _tuish_draw_clip_bot
+
 # ─── Unicode box-drawing characters (hex-encoded UTF-8) ───────────
 
 # Light
@@ -135,6 +142,14 @@ _tuish_draw_detect_unicode ()
 	esac
 }
 _tuish_draw_detect_unicode
+
+# The backend is per-context STATE seeded from the detected terminal capability:
+# every context starts at the detected value, but an app that switches itself to
+# ascii (boxes' backend toggle) must not leak that choice to its host or siblings.
+# Registered after detection so the captured default is the detected backend. The
+# style cache (_tuish_draw_cur_style/_cur_backend) keys by value and self-corrects
+# on the next draw call, so it stays device-global.
+tuish_ctx_register TUISH_DRAW_BACKEND
 
 # ─── Style system ─────────────────────────────────────────────────
 

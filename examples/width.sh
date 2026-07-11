@@ -9,18 +9,28 @@
 # If width calculation is correct, all vertical borders align perfectly.
 # Any misalignment reveals a width bug for that character class.
 # Ctrl+W to exit.
+#
+# Dual-mode: runs standalone (`sh examples/width.sh`) or embedded inside another
+# tuish app (the host sources it and calls _w_main inside a region). Every name is
+# _w_-prefixed; the code never knows whether it is hosted.
 
-_dir="$(cd "$(dirname "$0")" && pwd)"
-_tuish_src_dir="${_dir}/../src"
-. "${_tuish_src_dir}/compat.sh"
-. "${_tuish_src_dir}/ord.sh"
-. "${_tuish_src_dir}/tui.sh"
-. "${_tuish_src_dir}/term.sh"
-. "${_tuish_src_dir}/event.sh"
-. "${_tuish_src_dir}/hid.sh"
-. "${_tuish_src_dir}/viewport.sh"
-. "${_tuish_src_dir}/str.sh"
-. "${_tuish_src_dir}/keybind.sh"
+if test -z "${_tuish_tui_loaded:-}"
+then
+	_w_standalone=1
+	_dir="$(cd "$(dirname "$0")" && pwd)"
+	_tuish_src_dir="${_dir}/../src"
+	. "${_tuish_src_dir}/compat.sh"
+	. "${_tuish_src_dir}/ord.sh"
+	. "${_tuish_src_dir}/tui.sh"
+	. "${_tuish_src_dir}/term.sh"
+	. "${_tuish_src_dir}/event.sh"
+	. "${_tuish_src_dir}/hid.sh"
+	. "${_tuish_src_dir}/viewport.sh"
+	. "${_tuish_src_dir}/str.sh"
+	. "${_tuish_src_dir}/keybind.sh"
+else
+	_w_standalone=0
+fi
 
 # ─── State ────────────────────────────────────────────────────────
 
@@ -344,27 +354,44 @@ _w_pgdn ()
 	tuish_request_redraw
 }
 
-# ─── Key bindings ─────────────────────────────────────────────────
-
-tuish_bind 'ctrl-w'  '_w_quit'
-tuish_bind 'idle'    '_w_idle'
-tuish_bind 'resize'  '_w_resize'
-tuish_bind 'up'      '_w_scroll_up'
-tuish_bind 'down'    '_w_scroll_down'
-tuish_bind 'pgup'    '_w_pgup'
-tuish_bind 'pgdn'    '_w_pgdn'
-
-# ─── Event handler ────────────────────────────────────────────────
-
-tuish_on_redraw ()
-{
-	_w_redraw
-}
-
 # ─── Main ─────────────────────────────────────────────────────────
 
-tuish_init
-_w_precompute
-tuish_viewport fullscreen
-tuish_run || :
-tuish_fini
+# Entry point. Standalone the bootstrap below calls it; hosted, the host calls it
+# after tuish_ctx_create_region has made our region the active context. Bindings
+# and the render handler are registered here (after tuish_init) so they land in
+# whichever context is active — root standalone, the region when hosted.
+# Setup (everything but the event loop), split out so a cooperative host can mount
+# and drive width from its own loop. Standalone uses _w_main below.
+_w_setup ()
+{
+	_w_started=no
+	_w_scroll=0
+
+	tuish_init
+	tuish_mouse_on
+	_w_precompute
+	tuish_on_redraw _w_redraw
+	tuish_bind 'ctrl-w'  '_w_quit'
+	tuish_bind 'idle'    '_w_idle'
+	tuish_bind 'resize'  '_w_resize'
+	tuish_bind 'up'      '_w_scroll_up'
+	tuish_bind 'down'    '_w_scroll_down'
+	tuish_bind 'pgup'    '_w_pgup'
+	tuish_bind 'pgdn'    '_w_pgdn'
+	tuish_bind 'whup'    '_w_scroll_up'
+	tuish_bind 'wdown'   '_w_scroll_down'
+
+	tuish_viewport fullscreen
+}
+
+_w_main ()
+{
+	_w_setup
+	tuish_run || :
+	tuish_fini
+}
+
+if test "${_w_standalone:-0}" -eq 1
+then
+	_w_main
+fi

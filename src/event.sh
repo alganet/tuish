@@ -28,6 +28,9 @@ _tuish_redraw_requested=0
 _tuish_redraw_level=0
 _tuish_raf_inhibit=0
 
+# The redraw scheduler is per-context (a nested child renders on its own clock).
+tuish_ctx_register _tuish_redraw_requested _tuish_redraw_level _tuish_raf_inhibit
+
 tuish_request_redraw ()
 {
 	local _level=${1:--1}
@@ -46,7 +49,32 @@ tuish_cancel_redraw ()
 	_tuish_redraw_requested=0
 	_tuish_redraw_level=0
 }
-tuish_on_redraw ()        { :; }
+
+# ─── Render / event handlers, referenced by name per context ─────
+# A context stores the NAME of its render/event handler (not a redefined global
+# function), so multiple apps can coexist and be saved/restored without any
+# function-body introspection (busybox has none). The framework calls the active
+# context's handler indirectly, falling back to the redefinable tuish_on_redraw /
+# tuish_on_event stubs when no name was registered — so the classic "redefine the
+# hook" style keeps working unchanged for a single-context app.
+_tuish_render_fn=''
+_tuish_event_fn=''
+command -v tuish_ctx_register >/dev/null 2>&1 && tuish_ctx_register _tuish_render_fn _tuish_event_fn
+
+# tuish_on_redraw is polymorphic:
+#   tuish_on_redraw FUNC   (arg contains a non-digit) -> register FUNC as the
+#                          active context's render handler (the hostable form).
+#   tuish_on_redraw LEVEL  (empty or numeric, i.e. the framework's fallback call
+#                          when nothing was registered) -> no-op default.
+# An app may instead redefine this function outright; then it is never called as
+# a setter (the fallback simply invokes the redefined body).
+tuish_on_redraw ()
+{
+	case "${1:-}" in
+		*[!0-9-]*) _tuish_render_fn="$1";;
+		*) : ;;
+	esac
+}
 
 tuish_has_pending_input ()
 {
@@ -63,8 +91,18 @@ tuish_has_pending_input ()
 # in tui.sh (the base) and overridden by hid.sh / viewport.sh / keybind.sh.
 
 # ─── Default event handler (override in your app if needed) ──────
-
-tuish_on_event ()          { tuish_dispatch || :; }
+# Polymorphic like tuish_on_redraw:
+#   tuish_on_event FUNC  (one arg) -> register FUNC as the active context's event
+#                        handler (the hostable form).
+#   tuish_on_event       (no arg, the framework's fallback call) -> the default
+#                        behavior: dispatch the event through the bindings.
+tuish_on_event ()
+{
+	if test $# -gt 0
+	then _tuish_event_fn="$1"
+	else tuish_dispatch || :
+	fi
+}
 
 # ─── Internal: event dispatch ─────────────────────────────────────
 
@@ -92,6 +130,27 @@ _tuish_parse_event ()
 		return
 	fi
 
+	# Hosted: a CLICK outside our region is meant for the host, not us. Stash the
+	# absolute position and quit our loop; the host re-dispatches it (see the
+	# _tuish_yield note in tui.sh). This is what keeps a host's surrounding UI
+	# clickable while an app runs embedded. Motion outside the region is ignored.
+	if test "${_tuish_hosted:-0}" -eq 1 && test "$TUISH_EVENT_KIND" = 'mouse'
+	then
+		case "$TUISH_EVENT" in
+			*clik)
+				if test "$TUISH_MOUSE_X" -lt 1 || test "$TUISH_MOUSE_X" -gt "$_tuish_rgn_cols" \
+				   || test "$TUISH_MOUSE_Y" -lt 1 || test "$TUISH_MOUSE_Y" -gt "$_tuish_rgn_rows"
+				then
+					_tuish_yield=1
+					_tuish_yield_x=$(( TUISH_MOUSE_X + TUISH_VIEW_LEFT ))
+					_tuish_yield_y=$TUISH_MOUSE_ABS_Y
+					tuish_quit
+					return
+				fi
+				;;
+		esac
+	fi
+
 	# Drop repeat/release events when detailed mode is off
 	if test $_tuish_detailed -eq 0
 	then
@@ -115,7 +174,7 @@ _tuish_parse_event ()
 	fi
 
 	tuish_begin
-	tuish_on_event
+	"${_tuish_event_fn:-tuish_on_event}"
 
 	if test $_tuish_redraw_requested -eq 1
 	then
@@ -140,7 +199,7 @@ _tuish_parse_event ()
 			_tuish_buf=''
 			tuish_hide_cursor
 			_tuish_cursor_vrow=0
-			tuish_on_redraw "$_level"
+			"${_tuish_render_fn:-tuish_on_redraw}" "$_level"
 			test -n "$_tuish_buf" && _tuish_out "$_tuish_buf"
 			_tuish_buf=''
 			_tuish_buffering=0
