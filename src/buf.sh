@@ -28,12 +28,15 @@ TUISH_BUF_COUNT=0
 
 tuish_buf_count ()   # BUF
 {
-	eval "TUISH_BUF_COUNT=\$_tuish_bufcount_$1"
+	# `:-0` so counting a never-touched buffer is 0, not a set -u abort.
+	eval "TUISH_BUF_COUNT=\${_tuish_bufcount_$1:-0}"
 }
 
 tuish_buf_get ()   # BUF IDX
 {
-	eval "TUISH_BLINE=\"\$_tuish_buf_${1}_$2\""
+	# `:-` so an out-of-range index (e.g. a mouse click/selection past the last
+	# line) yields an empty line instead of aborting the whole app under set -u.
+	eval "TUISH_BLINE=\"\${_tuish_buf_${1}_$2:-}\""
 }
 
 tuish_buf_set ()   # BUF IDX VAL

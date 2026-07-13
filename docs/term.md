@@ -19,12 +19,20 @@ screen clearing, and scroll regions. Source after `tui.sh`.
 | Function               | Description                                                                                 |
 |------------------------|---------------------------------------------------------------------------------------------|
 | `tuish_move ROW COL`   | Move cursor to absolute position (1-based)                                                  |
-| `tuish_vmove ROW COL`  | Move cursor relative to viewport top (1-based)                                              |
+| `tuish_vmove ROW COL`  | Move cursor relative to the viewport's top *and left* (1-based)                             |
 | `tuish_move_up [N]`    | Move cursor up N rows (default: 1)                                                          |
 | `tuish_move_down [N]`  | Move cursor down N rows (default: 1)                                                        |
 | `tuish_move_right [N]` | Move cursor right N columns (default: 1)                                                    |
 | `tuish_move_left [N]`  | Move cursor left N columns (default: 1)                                                     |
 | `tuish_cursor ROW COL` | Move to viewport-relative position, show cursor, and record position for rAF cursor-restore |
+
+`tuish_vmove` applies both a row origin (`TUISH_VIEW_TOP`) and a column origin
+(`TUISH_VIEW_LEFT`), so it -- and everything built on it (`tuish_print_at`,
+`tuish_text`, `tuish_cursor`, `tuish_clear_region`, and the draw primitives in
+[draw.md](draw.md)) -- is relative to the viewport's top *and* left. For the
+root context `TUISH_VIEW_LEFT` is 0, so nothing changes standalone; a hosted
+child gets its region's left edge as logical column 1
+(see [hosting.md](hosting.md)).
 
 ## Cursor Shape
 
@@ -84,11 +92,41 @@ caller's responsibility.
 
 | Function                         | Description                                                                                                         |
 |----------------------------------|---------------------------------------------------------------------------------------------------------------------|
-| `tuish_clear_screen`             | Erase entire screen                                                                                                 |
-| `tuish_clear_line`               | Erase entire current line                                                                                           |
-| `tuish_clear_to_eol`             | Erase from cursor to end of line                                                                                    |
-| `tuish_clear_to_bol`             | Erase from cursor to beginning of line                                                                              |
+| `tuish_clear_screen`             | Erase entire screen (**not region-safe**)                                                                           |
+| `tuish_clear_line`               | Erase entire current line (**not region-safe**)                                                                     |
+| `tuish_clear_to_eol`             | Erase from cursor to end of line (**not region-safe**)                                                              |
+| `tuish_clear_to_bol`             | Erase from cursor to beginning of line (**not region-safe**)                                                        |
+| `tuish_clear_to_edge ROW [COL]`  | Erase logical ROW from COL (default 1) rightward to the edge of the drawable area                                   |
 | `tuish_clear_region ROW COL W H` | Clear a rectangular area by writing spaces (no color; for colored fill see `tuish_draw_fill` in [draw.md](draw.md)) |
+
+> **`tuish_clear_screen`, `tuish_clear_line`, `tuish_clear_to_eol` and
+> `tuish_clear_to_bol` are not region-safe.** They emit the raw `ESC[2J` /
+> `ESC[2K` / `ESC[K` / `ESC[1K` sequences, which act on the **physical**
+> terminal screen or line: they ignore the
+> viewport and a hosted region, so from inside an embedded app they erase
+> straight through into the host's chrome (an embedded editor's `ESC[K` will
+> eat the host's box border). Code that may ever run hosted must use
+> `tuish_clear_to_edge` or `tuish_clear_region` instead. The raw forms remain
+> the cheapest possible erase for root-owned, full-width apps.
+
+### tuish_clear_to_edge ROW [COL]
+
+Erases logical `ROW` from `COL` (default 1) rightward to the edge of the
+**drawable area** -- the viewport standalone, the region when hosted. It is
+bounded by `TUISH_VIEW_COLS` (falling back to `TUISH_COLUMNS` when no viewport
+is set), so it degrades to exactly the old full-width behavior standalone.
+
+Because it *erases* rather than trims, the idiom is **clear first, then print**
+-- the reverse of the old print-then-`ESC[K`. An SGR set before the call (e.g.
+`tuish_reverse`) colors the padding, which is how a full-width reverse
+status/header bar is drawn.
+
+```sh
+tuish_reverse
+tuish_clear_to_edge $TUISH_VIEW_ROWS      # reverse-video padding to the edge
+tuish_print_at $TUISH_VIEW_ROWS 1 " status "
+tuish_sgr_reset
+```
 
 ## Scrolling
 

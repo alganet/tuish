@@ -303,6 +303,25 @@ _tuish_viewport_clear_range ()
 
 _tuish_viewport_on_resize ()
 {
+	# Hosted: our region is owned by the host, not the terminal. A terminal resize
+	# is the host's concern — it re-seats our region and drives our redraw. Running
+	# the standalone relayout here would clobber our viewport to the full-terminal
+	# size (TUISH_VIEW_COLS=TUISH_COLUMNS below) and emit device-global I/O (the
+	# cursor query, the scroll region) that belongs to the host, not a sub-region.
+	# So re-apply our current region bounds — mirroring tuish_viewport's hosted
+	# branch — and return, touching neither the device nor the full-screen math.
+	if test "${_tuish_hosted:-0}" -eq 1
+	then
+		TUISH_VIEW_TOP=$_tuish_rgn_top
+		TUISH_VIEW_LEFT=$_tuish_rgn_left
+		TUISH_VIEW_ROWS=$_tuish_rgn_rows
+		TUISH_VIEW_COLS=$_tuish_rgn_cols
+		_tuish_view_phys=$_tuish_rgn_rows
+		_tuish_view_origin=$_tuish_rgn_top
+		_tuish_tx_reset
+		return 0
+	fi
+
 	local _old_cols=${_tuish_precols:-$TUISH_COLUMNS}
 	local _old_lines=$TUISH_LINES
 	local _old_phys=$_tuish_view_phys

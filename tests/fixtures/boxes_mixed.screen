@@ -1,4 +1,4 @@
- boxes.sh | mixed (unicode) | b:backend n/p c j/k ctrl+w
+ boxes.sh | mixed (unicode) | b:backend n/p c j/k q:quit
 
  double box + light hdiv   double box + light grid   light box + double hdiv
  ╔══════════════════════╗  ╔═══════════╤══════════╗  ┌────────────────────┐

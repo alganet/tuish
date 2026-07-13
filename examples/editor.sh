@@ -291,7 +291,7 @@ _ed_toggle_fullscreen ()
 		tuish_viewport fullscreen
 	fi
 	_view_height=$((TUISH_VIEW_ROWS - 1))
-	_view_width=$TUISH_COLUMNS
+	_view_width=$TUISH_VIEW_COLS   # region width when hosted; full width standalone
 	tuish_request_redraw
 }
 
@@ -451,9 +451,12 @@ _ed_drag ()
 		_sel_col=$_cur_col
 	fi
 	_cur_row=$((_view_top + TUISH_MOUSE_Y - 1))
-	_col_to_char $((_view_left + TUISH_MOUSE_X - 1))
+	# Clamp BEFORE _col_to_char reads the line (as _ed_click does) — a drag below
+	# the last line would otherwise index an unbound buffer var under set -u and
+	# abort. This is the common case in a region host: drag-selecting past the text.
 	test $_cur_row -lt 1 && _cur_row=1
 	test $_cur_row -gt $TUISH_BUF_COUNT && _cur_row=$TUISH_BUF_COUNT
+	_col_to_char $((_view_left + TUISH_MOUSE_X - 1))
 	_clamp_col
 	tuish_request_redraw
 }
@@ -659,7 +662,7 @@ _ed_resize ()
 {
 	_view_height=$((TUISH_VIEW_ROWS - 1))
 	test $_view_height -lt 0 && _view_height=0
-	_view_width=$TUISH_COLUMNS
+	_view_width=$TUISH_VIEW_COLS   # region width when hosted; full width standalone
 	test $_view_width -lt 1 && _view_width=1
 	# Clear viewport to prevent rewrap garbage after width change
 	local _i=1
@@ -708,6 +711,10 @@ _ed_render ()
 	local _line
 	while test $_vrow -le $_view_height
 	do
+		# Erase the row first, bounded by our drawable width, then draw over it.
+		# (The old print-then-clear_to_eol erased to the end of the PHYSICAL line,
+		# which from a hosted region punched through into the host's chrome.)
+		tuish_clear_to_edge $_vrow
 		if tuish_vmove $_vrow 1
 		then
 			if test $_lnum -le $TUISH_BUF_COUNT
@@ -726,7 +733,6 @@ _ed_render ()
 				tuish_print '~'
 				tuish_sgr_reset
 			fi
-			tuish_clear_to_eol
 		fi
 
 		_vrow=$((_vrow + 1))
@@ -808,7 +814,9 @@ _render_status ()
 {
 	tuish_vmove $TUISH_VIEW_ROWS 1
 	tuish_sgr '7'
-	local _w=$TUISH_COLUMNS
+	# The status bar spans OUR drawable width, not the terminal's: hosted, padding
+	# to TUISH_COLUMNS would paint a full-width reverse bar across the host's page.
+	local _w=$TUISH_VIEW_COLS
 	test $_w -lt 1 && { tuish_sgr_reset; return; }
 	local _info=" Ln ${_cur_row}, Col ${_cur_col}  |  ${TUISH_BUF_COUNT} lines "
 	if test $_sel_row -ne 0
@@ -852,7 +860,8 @@ _render_status ()
 	fi
 	tuish_print "$_help"
 	tuish_sgr_reset
-	tuish_clear_to_eol
+	# No clear-to-eol: the padding above already fills the line to _w (our drawable
+	# width). ESC[K here would erase past the region into the host's chrome.
 }
 
 _render_line ()
@@ -862,6 +871,8 @@ _render_line ()
 	# Skip if outside the text area (avoids overwriting status bar)
 	test $_vrow -lt 1 && return
 	test $_vrow -gt $_view_height && return
+	# Erase-then-draw, bounded by our drawable width (see _ed_render).
+	tuish_clear_to_edge $_vrow
 	tuish_vmove $_vrow 1
 	if test $_lnum -le $TUISH_BUF_COUNT
 	then
@@ -872,7 +883,6 @@ _render_line ()
 		tuish_print '~'
 		tuish_sgr_reset
 	fi
-	tuish_clear_to_eol
 }
 
 # ─── Key bindings ───────────────────────────────────────────────────
@@ -989,11 +999,9 @@ _ed_on_redraw ()
 
 # ─── Main ───────────────────────────────────────────────────────────
 
-# Entry point. Standalone the bootstrap below calls it; hosted, the host calls it
-# after tuish_ctx_create_region has made our region the active context.
-# Setup (everything but the event loop), split out so a cooperative host can mount
-# and drive the editor from its own loop. Takes an optional file path in $1, like
-# _ed_main. Standalone (and the cursor-shape restore) stay in _ed_main below.
+# Everything but the event loop. Split out of _ed_main so a cooperative host can
+# tuish_ctx_mount us and drive us from ITS loop (we never call tuish_run then).
+# Takes an optional file path in $1, exactly like _ed_main.
 _ed_setup ()
 {
 	# Fresh state each launch (a host may run us more than once).
@@ -1038,6 +1046,8 @@ _ed_setup ()
 # runs the hook on every exit path — standalone, modal return, and coop unmount.
 _ed_fini () { tuish_cursor_shape 0; }
 
+# Entry point for the BLOCKING form: standalone (the bootstrap below) or a modal host
+# that runs us inside a region it created and gets control back when we quit.
 _ed_main ()
 {
 	_ed_setup "${@:-}"

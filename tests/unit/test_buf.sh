@@ -90,4 +90,13 @@ tuish_buf_append fresh 'only line'
 assert_eq "$TUISH_BUF_COUNT" "1" "append: auto-create count is 1"
 tuish_buf_get fresh 1; assert_eq "$TUISH_BLINE" "only line" "append: auto-create stored the line"
 
+# --- Out-of-range reads are safe under set -u (regression) -------------------
+# A get past the last line, or a count of a never-touched buffer, must yield
+# empty/0 rather than aborting the whole app under `set -u` — the crash a mouse
+# click/drag below the last editor line used to trigger (_tuish_buf_<b>_<idx>
+# unset). This whole file runs under `set -euf`, so a regression aborts it here.
+tuish_buf_get fresh 99;  assert_eq "$TUISH_BLINE" ""  "get: out-of-range index is empty, not an abort"
+tuish_buf_get _ 0;       assert_eq "$TUISH_BLINE" ""  "get: index 0 is empty, not an abort"
+tuish_buf_count never;   assert_eq "$TUISH_BUF_COUNT" "0" "count: untouched buffer is 0, not an abort"
+
 test_summary

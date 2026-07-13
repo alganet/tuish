@@ -61,17 +61,21 @@ _count=0
 _render ()
 {
     tuish_hide_cursor
-    tuish_vmove 1 1
+
+    # Reverse-fill row 1 across the drawable width, then print the title over it.
+    # tuish_clear_to_edge is bounded by the viewport (or the region, when hosted);
+    # tuish_clear_to_eol would erase to the end of the physical line. See term.md.
     tuish_reverse
+    tuish_clear_to_edge 1
+    tuish_vmove 1 1
     tuish_print " Click counter "
-    tuish_clear_to_eol
     tuish_sgr_reset
 
+    tuish_clear_to_edge 3
     tuish_vmove 3 3
     tuish_fg 2
     tuish_print "Clicks: $_count"
     tuish_sgr_reset
-    tuish_clear_to_eol
     tuish_show_cursor
 }
 
@@ -126,8 +130,16 @@ Output buffering is automatic -- all writes inside an event handler are
 coalesced and flushed after it returns.
 
 For advanced use cases that need logic wrapping every event (e.g., saving
-state before dispatch and checking side effects after), override
-`tuish_on_event`. See [event.md](event.md#callbacks) for details.
+state before dispatch and checking side effects after), register your own
+handler with `tuish_on_event _my_handler`. See
+[event.md](event.md#callbacks) for details.
+
+> **If your app might ever be embedded in another** (see
+> [hosting.md](hosting.md)), always *register* handlers by name --
+> `tuish_on_redraw _render`, `tuish_on_event _handler` -- rather than
+> redefining `tuish_on_redraw ()` / `tuish_on_event ()` as functions.
+> Redefinition is process-global, so two apps written that way would fight
+> over the same function; registration stores the handler per context.
 
 ## Module System
 
@@ -141,15 +153,21 @@ only what your app needs.
 |---------------|-----------------------------------------------------|-----------------------|
 | `compat.sh`   | shell options, portable output, ksh93 `local` alias | --                    |
 | `ord.sh`      | ASCII ord/chr lookup tables                         | `compat.sh`           |
-| `tui.sh`      | terminal setup, teardown, traps, IO stubs, state    | `compat.sh`           |
+| `tui.sh`      | terminal setup, teardown, traps, IO stubs, state, contexts | `compat.sh`    |
 | `term.sh`     | buffered write, cursor, colors, SGR, scroll regions | `tui.sh`              |
 | `event.sh`    | event loop, dispatch, redraw scheduling             | `tui.sh`, `ord.sh`    |
 | `hid.sh`      | keyboard/mouse name resolution                      | `event.sh`            |
 | `viewport.sh` | viewport modes (fullscreen, fixed, grow)            | `term.sh`, `event.sh` |
+| `canvas.sh`   | clipped sub-region with local coordinates           | `term.sh`             |
 | `str.sh`      | string/Unicode width utilities                      | `ord.sh`              |
 | `buf.sh`      | line buffer                                         | --                    |
 | `keybind.sh`  | key binding dispatch                                | `ord.sh`              |
 | `draw.sh`     | box drawing                                         | `term.sh`, `str.sh`   |
+
+Modules that own per-app state (`draw.sh`, `hid.sh`, `viewport.sh`, `event.sh`,
+`keybind.sh`) register it with `tui.sh` so it can be saved and restored per
+context -- one more reason `tui.sh` must be sourced before them. See
+[hosting.md](hosting.md).
 
 Always source `compat.sh` first, then `ord.sh`, then `tui.sh`. After that,
 order does not matter as long as dependencies are satisfied.
@@ -201,13 +219,14 @@ _next_page ()
     tuish_request_redraw      # schedule, don't draw
 }
 
-tuish_on_redraw ()
+_render ()
 {
+    tuish_clear_to_edge 1        # erase row 1 across our width, then draw
     tuish_vmove 1 1
     tuish_print "Page: $_page"
-    tuish_clear_to_eol
 }
 
+tuish_on_redraw _render
 tuish_bind 'char n' '_next_page'
 ```
 
@@ -219,6 +238,7 @@ for details.
 
 ## Next Steps
 
+- [Hosting and Contexts](hosting.md) -- run one app inside another; cooperative multi-app loops
 - [Core (tui.sh)](tui.md) -- lifecycle, buffering, terminal variables
 - [Terminal Output (term.sh)](term.md) -- cursor, colors, text attributes
 - [Event Loop (event.sh)](event.md) -- redraw scheduling

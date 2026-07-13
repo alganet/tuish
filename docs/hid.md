@@ -376,7 +376,8 @@ These arrive as escape sequences but are categorized as `paste` kind, not `key`.
 ## Mouse Events (Kind: `mouse`)
 
 Mouse events set `TUISH_EVENT` to the action name and `TUISH_MOUSE_X` /
-`TUISH_MOUSE_Y` to the 1-based coordinates.
+`TUISH_MOUSE_Y` to the 1-based coordinates (see [Mouse
+Coordinates](#mouse-coordinates)).
 
 ### Click Events
 
@@ -445,7 +446,30 @@ When a modifier+hold is released, the corresponding modifier+drop event fires:
 ### Mouse Coordinates
 
 Mouse events set `TUISH_MOUSE_X` (column) and `TUISH_MOUSE_Y` (row).
-Coordinates are 1-based, matching the SGR 1006 protocol.
+Coordinates are 1-based.
+
+When a viewport is active, both are translated into the **active context's**
+coordinate frame -- the inverse of the `tuish_vmove` transform:
+
+```
+TUISH_MOUSE_Y = row    - TUISH_VIEW_TOP  + 1
+TUISH_MOUSE_X = column - TUISH_VIEW_LEFT
+```
+
+So for a hosted child they are region-local, and an embedded app's click
+handling works unchanged (see [hosting.md](hosting.md)). For the root context
+`TUISH_VIEW_LEFT` is 0, so standalone coordinates are unchanged.
+`TUISH_MOUSE_ABS_Y` still holds the absolute terminal row; there is
+deliberately no `TUISH_MOUSE_ABS_X`.
+
+### X10 Fallback
+
+For terminals without SGR 1006, tui.sh also decodes the legacy X10 mouse report
+(`ESC [ M cb cx cy` -- three bytes, each offset by +32). It is consumed in the
+CSI parser and resolves through the same button path as SGR, so the event names
+and modifier prefixes above are identical. Two known limits of the legacy
+encoding: X10 reports a **release** as button 3 rather than as a distinct
+release class, and it cannot express coordinates beyond column/row 223.
 
 ---
 
