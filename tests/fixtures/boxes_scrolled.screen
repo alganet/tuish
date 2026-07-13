@@ -1,4 +1,4 @@
- boxes.sh | light (unicode) | b:backend n/p c j/k ctrl+w
+ boxes.sh | light (unicode) | b:backend n/p c j/k q:quit
  ──────────────  │            │  ┌─────────────               │
                  │            │  │                            │
                  │            │  │                            │

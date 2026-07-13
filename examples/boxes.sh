@@ -6,7 +6,7 @@
 
 # boxes.sh - Demo of draw.sh styles and composable box drawing
 # Pages: light, heavy, double, rounded, mixed (cross-style junctions).
-# n/p to switch pages, b to toggle backend, j/k to scroll, ctrl+w to exit.
+# n/p to switch pages, b to toggle backend, j/k to scroll, q to exit.
 #
 # Dual-mode: runs standalone (`sh examples/boxes.sh`) or embedded inside another
 # tuish app (the host sources it and calls _bx_main inside a region). Every name
@@ -177,10 +177,13 @@ _bx_vline ()
 _bx_header ()
 {
 	_bx_style_name $_bx_page
-	tuish_vmove 1 1
+	# Reverse-fill the header row across OUR drawable width, then print over it.
+	# (tuish_clear_to_eol would reverse-fill to the end of the physical line —
+	# a full-terminal-width bar straight across an embedding host's page.)
 	tuish_reverse
-	tuish_print " boxes.sh | ${_bx_sname} (${TUISH_DRAW_BACKEND}) | b:backend n/p c j/k ctrl+w "
-	tuish_clear_to_eol
+	tuish_clear_to_edge 1
+	tuish_vmove 1 1
+	tuish_print " boxes.sh | ${_bx_sname} (${TUISH_DRAW_BACKEND}) | b:backend n/p c j/k q:quit "
 	tuish_sgr_reset
 }
 
@@ -495,12 +498,10 @@ _bx_idle ()
 
 # ─── Main ────────────────────────────────────────────────────────
 
-# Entry point. Standalone the bootstrap below calls it; hosted, the host calls it
-# after tuish_ctx_create_region has made our region the active context. Bindings
-# and the render handler are registered here (after tuish_init) so they land in
-# whichever context is active — root standalone, the region when hosted.
-# Setup (everything but the event loop), split out so a cooperative host can mount
-# and drive boxes from its own loop. Standalone uses _bx_main below.
+# Everything but the event loop. Split out of _bx_main so a cooperative host can
+# tuish_ctx_mount us and drive us from ITS loop (we never call tuish_run then).
+# Bindings and the render handler are registered here, after tuish_init, so they land
+# in whichever context is active — the root standalone, our region when hosted.
 _bx_setup ()
 {
 	_bx_started=no
@@ -510,6 +511,7 @@ _bx_setup ()
 	tuish_mouse_on
 	tuish_on_redraw _bx_redraw
 	tuish_bind 'ctrl-w'  '_bx_quit'
+	tuish_bind 'char q'  '_bx_quit'   # q works everywhere; Ctrl+W is reserved by browsers
 	tuish_bind 'idle'    '_bx_idle'
 	tuish_bind 'resize'  '_bx_resize'
 	tuish_bind 'char n'  '_bx_next'
@@ -526,6 +528,8 @@ _bx_setup ()
 	tuish_viewport fullscreen
 }
 
+# Entry point for the BLOCKING form: standalone (the bootstrap below) or a modal host
+# that runs us inside a region it created and gets control back when we quit.
 _bx_main ()
 {
 	_bx_setup

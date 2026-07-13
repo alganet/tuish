@@ -213,13 +213,16 @@ _w_draw_tests ()
 		if test $_vr -ge 3 && test $_vr -le $TUISH_VIEW_ROWS
 		then
 			eval "_type=\$_w_type_${_i}"
+			# Erase the row across our drawable width first, then draw over it —
+			# one clear for all three row types. ESC[K would erase to the end of
+			# the physical line, through an embedding host's chrome.
+			tuish_clear_to_edge $_vr
 			tuish_vmove $_vr 1
 			case "$_type" in
 				h)
 					tuish_dim
 					tuish_print "  +----------------------+--------------------------+----------+"
 					tuish_sgr_reset
-					tuish_clear_to_eol
 					;;
 				s)
 					eval "local _title=\"\$_w_stitle_${_i}\""
@@ -234,7 +237,6 @@ _w_draw_tests ()
 					tuish_print "$_dashes"
 					tuish_print "+"
 					tuish_sgr_reset
-					tuish_clear_to_eol
 					;;
 				t)
 					eval "local _lab=\"\$_w_tlab_${_i}\""
@@ -269,7 +271,6 @@ _w_draw_tests ()
 					tuish_dim
 					tuish_print " |"
 					tuish_sgr_reset
-					tuish_clear_to_eol
 					;;
 			esac
 		fi
@@ -280,8 +281,7 @@ _w_draw_tests ()
 	_vr=$((_w_n - _w_scroll + 3))
 	while test $_vr -ge 3 && test $_vr -le $TUISH_VIEW_ROWS
 	do
-		tuish_vmove $_vr 1
-		tuish_clear_to_eol
+		tuish_clear_to_edge $_vr
 		_vr=$((_vr + 1))
 	done
 }
@@ -290,17 +290,18 @@ _w_draw_tests ()
 
 _w_header ()
 {
-	tuish_vmove 1 1
+	# Reverse-fill row 1 across our width, then print over it (see boxes.sh).
 	tuish_sgr '7'
+	tuish_clear_to_edge 1
+	tuish_vmove 1 1
 	tuish_print " width.sh ACID test (quit: ctrl+w  scroll: arrows/pgup/pgdn) "
-	tuish_clear_to_eol
 	tuish_sgr_reset
 
+	tuish_clear_to_edge 2
 	tuish_vmove 2 1
 	tuish_dim
 	tuish_print "  If widths are correct, all vertical borders align."
 	tuish_sgr_reset
-	tuish_clear_to_eol
 }
 
 _w_redraw ()
@@ -356,12 +357,10 @@ _w_pgdn ()
 
 # ─── Main ─────────────────────────────────────────────────────────
 
-# Entry point. Standalone the bootstrap below calls it; hosted, the host calls it
-# after tuish_ctx_create_region has made our region the active context. Bindings
-# and the render handler are registered here (after tuish_init) so they land in
-# whichever context is active — root standalone, the region when hosted.
-# Setup (everything but the event loop), split out so a cooperative host can mount
-# and drive width from its own loop. Standalone uses _w_main below.
+# Everything but the event loop. Split out of _w_main so a cooperative host can
+# tuish_ctx_mount us and drive us from ITS loop (we never call tuish_run then).
+# Bindings and the render handler are registered here, after tuish_init, so they land
+# in whichever context is active — the root standalone, our region when hosted.
 _w_setup ()
 {
 	_w_started=no
@@ -384,6 +383,8 @@ _w_setup ()
 	tuish_viewport fullscreen
 }
 
+# Entry point for the BLOCKING form: standalone (the bootstrap below) or a modal host
+# that runs us inside a region it created and gets control back when we quit.
 _w_main ()
 {
 	_w_setup

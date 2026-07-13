@@ -47,6 +47,11 @@ tuish_start
   held keys don't cause lag.
 - **Unicode-aware** -- display width calculation for CJK, emoji, combining
   marks. Box drawing auto-detects UTF-8 for Unicode line characters.
+- **App-in-app hosting** -- run a whole tuish app inside a region of
+  another, in one process with no forks. Either modally (the child takes
+  the keyboard until it quits) or **cooperatively**: one event loop driving
+  several live children at once, each ticking at its own negotiated rate.
+  See [hosting.md](docs/hosting.md).
 
 ## Supported Shells
 
@@ -67,11 +72,12 @@ is optional -- pick what you need:
 |---------------|-------------------------------------------------|
 | `compat.sh`   | Shell normalization, portable output            |
 | `ord.sh`      | ASCII lookup tables                             |
-| `tui.sh`      | Terminal lifecycle, traps, buffering            |
+| `tui.sh`      | Terminal lifecycle, traps, buffering, contexts  |
 | `term.sh`     | Cursor, colors, text attributes, scroll regions |
 | `event.sh`    | Event loop, redraw scheduling                   |
 | `hid.sh`      | Keyboard/mouse event name resolution            |
 | `viewport.sh` | Fullscreen, fixed, and grow viewport modes      |
+| `canvas.sh`   | Clipped sub-region with local coordinates       |
 | `str.sh`      | String operations, Unicode display width        |
 | `buf.sh`      | Indexed line buffer                             |
 | `keybind.sh`  | Declarative event-to-action dispatch            |
@@ -80,11 +86,19 @@ is optional -- pick what you need:
 ## Examples
 
 ```sh
+bash examples/cooperative.sh  # One loop, two live apps: a clock + the editor
 bash examples/editor.sh       # CUA-like text editor
+bash examples/game.sh         # Emoji platformer (dirty-sprite renderer)
 bash examples/boxes.sh        # Box drawing styles and composable layouts
+bash examples/canvas_demo.sh  # Two independently scrollable clipped panels
 bash examples/debug.sh        # Live event inspector
 bash examples/width.sh        # Unicode width ACID test
+bash examples/slow_menu.sh    # Streaming output in a grow viewport
 ```
+
+Each is **dual-mode**: run it standalone, or source it from another tuish app
+and run it inside a region -- that is what `cooperative.sh` does with the
+editor, and what the website does with all of them.
 
 ## Documentation
 
@@ -94,6 +108,7 @@ bash examples/width.sh        # Unicode width ACID test
 - [Event Loop (event.sh)](docs/event.md) -- event lifecycle, redraw scheduling
 - [HID (hid.sh)](docs/hid.md) -- complete event name reference
 - [Viewport Modes (viewport.sh)](docs/viewport.md) -- fullscreen, fixed, grow
+- [Hosting and Contexts](docs/hosting.md) -- one app inside another, cooperative multi-app loops
 - [Box Drawing (draw.sh)](docs/draw.md) -- styles, junctions, clipping
 - [String Utilities (str.sh)](docs/str.md) -- Unicode width, substrings
 - [Line Buffer (buf.sh)](docs/buf.md) -- indexed line storage

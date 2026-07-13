@@ -26,13 +26,57 @@ Source after `tui.sh`.
 
 | Function                | Default                | Description                                                                                   |
 |-------------------------|------------------------|-----------------------------------------------------------------------------------------------|
-| `tuish_on_event`        | calls `tuish_dispatch` | Called for every parsed event. Override for pre/post-dispatch logic.                          |
-| `tuish_on_redraw LEVEL` | no-op                  | Called when a deferred redraw fires. `LEVEL` is `-1` (full), or a positive integer (partial). |
+| `tuish_on_event FUNC`   | calls `tuish_dispatch` | Register the per-context event handler, called for every parsed event. Use for pre/post-dispatch logic. |
+| `tuish_on_redraw FUNC`  | no-op                  | Register the per-context render handler, called with `LEVEL` when a deferred redraw fires: `-1` (full), or a positive integer (partial). |
+| `tuish_on_fini FUNC`    | none                   | Register a teardown function, run by `tuish_fini` on every exit path (setter only).           |
 
 The default `tuish_on_event` calls `tuish_dispatch`, so apps that use
 `tuish_bind` (from `keybind.sh`) don't need to define it at all. Override
 `tuish_on_event` when you need logic that wraps dispatch -- e.g., saving
 state before dispatch and checking side effects after.
+
+### Registering handlers by name
+
+`tuish_on_redraw` and `tuish_on_event` are polymorphic. There are two styles:
+
+```sh
+# (a) Register by name -- required if the app may be hosted/embedded
+tuish_on_redraw _my_render
+tuish_on_event  _my_handler
+
+# (b) Redefine the function -- the classic style, still works
+tuish_on_redraw () { ... }
+tuish_on_event  () { ... }
+```
+
+Style (a) stores the handler **per-context** (`_tuish_render_fn` /
+`_tuish_event_fn`). The framework calls
+`"${_tuish_render_fn:-tuish_on_redraw}" "$LEVEL"` and
+`"${_tuish_event_fn:-tuish_on_event}"`, so it falls back to the redefinable
+stub when no name was registered.
+
+Style (b) is process-global: an app written this way **cannot be hosted
+alongside another app**, because both would fight over the same function
+definition. Register by name if your app may ever run embedded --
+see [hosting.md](hosting.md).
+
+> **Gotcha.** `tuish_on_redraw` discriminates by "does the argument contain a
+> non-digit", because the framework's own fallback call passes a numeric
+> `LEVEL`. A render handler whose *name* is all digits/dashes would be
+> swallowed as a level. `tuish_on_event` discriminates on argument **count**
+> (`$# -gt 0`).
+
+### Teardown
+
+```sh
+tuish_on_fini _my_cleanup
+```
+
+`tuish_on_fini` registers a per-context teardown function that `tuish_fini`
+runs on **every** exit path: standalone teardown, modal return, and
+cooperative unmount. Restore device state your app changed (e.g. cursor
+shape) there. Unlike the two callbacks above it is a **setter only** -- the
+framework never calls it with a level or with no arguments.
 
 ## Event Variables
 
@@ -42,10 +86,17 @@ Set before each event dispatch:
 |---------------------|--------------------------------------------------------------------|
 | `TUISH_EVENT`       | Parsed event name (e.g. `ctrl-w`, `up`, `char x`, `lclik`, `idle`) |
 | `TUISH_EVENT_KIND`  | Event category: `key`, `mouse`, `focus`, `paste`, `signal`, `idle` |
-| `TUISH_MOUSE_X`     | Mouse column (1-based)                                             |
-| `TUISH_MOUSE_Y`     | Mouse row (1-based, viewport-relative when viewport active)        |
+| `TUISH_MOUSE_X`     | Mouse column (1-based, viewport/region-relative when viewport active) |
+| `TUISH_MOUSE_Y`     | Mouse row (1-based, viewport/region-relative when viewport active)   |
 | `TUISH_MOUSE_ABS_Y` | Mouse row (1-based, absolute terminal row)                         |
 | `TUISH_RAW`         | Raw event data for debugging (see example below)                   |
+
+`TUISH_MOUSE_X` and `TUISH_MOUSE_Y` are expressed in the **active context's**
+coordinate frame: for a hosted child they are region-local, so an embedded
+app's click handling works unchanged. `TUISH_MOUSE_ABS_Y` holds the absolute
+terminal row; there is deliberately no `TUISH_MOUSE_ABS_X`. For the root
+context the column origin is 0, so standalone coordinates are unchanged.
+See [hosting.md](hosting.md).
 
 See [hid.md](hid.md) for the complete list of event names.
 
@@ -134,13 +185,14 @@ _on_next ()
     tuish_request_redraw      # schedule full redraw (default -1)
 }
 
-tuish_on_redraw ()
+_render ()
 {
+    tuish_clear_to_edge 1        # erase row 1 across our width, then draw
     tuish_vmove 1 1
     tuish_print "Count: $_count"
-    tuish_clear_to_eol
 }
 
+tuish_on_redraw _render
 tuish_bind 'char n' '_on_next'
 ```
 

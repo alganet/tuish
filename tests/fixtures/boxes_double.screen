@@ -1,4 +1,4 @@
- boxes.sh | double (unicode) | b:backend n/p c j/k ctrl+w
+ boxes.sh | double (unicode) | b:backend n/p c j/k q:quit
 
  default           fg=4 bg=0         wide
  ╔══════════════╗  ╔══════════════╗  ╔════════════════════════════╗

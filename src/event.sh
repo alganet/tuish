@@ -130,20 +130,24 @@ _tuish_parse_event ()
 		return
 	fi
 
-	# Hosted: a CLICK outside our region is meant for the host, not us. Stash the
-	# absolute position and quit our loop; the host re-dispatches it (see the
-	# _tuish_yield note in tui.sh). This is what keeps a host's surrounding UI
-	# clickable while an app runs embedded. Motion outside the region is ignored.
-	if test "${_tuish_hosted:-0}" -eq 1 && test "$TUISH_EVENT_KIND" = 'mouse'
+	# MODAL hosting only: a click outside our region is meant for the host, not us,
+	# but a modal child owns the keyboard inside its own nested tuish_run — so the
+	# only way to hand control back is to end that loop. We quit; the host's
+	# tuish_run resumes and its UI is live again. The click itself is CONSUMED, not
+	# replayed: closing the child IS the response to it. Motion outside is ignored.
+	#
+	# A cooperatively-driven child (_tuish_driven) never takes this path: its host
+	# keeps the one loop and routes by region, forwarding only what falls inside —
+	# so an outside click simply never reaches the child, and self-quitting here
+	# would be a spurious quit the host would read as "the app ended".
+	if test "${_tuish_hosted:-0}" -eq 1 && test "${_tuish_driven:-0}" -ne 1 \
+	   && test "$TUISH_EVENT_KIND" = 'mouse'
 	then
 		case "$TUISH_EVENT" in
 			*clik)
 				if test "$TUISH_MOUSE_X" -lt 1 || test "$TUISH_MOUSE_X" -gt "$_tuish_rgn_cols" \
 				   || test "$TUISH_MOUSE_Y" -lt 1 || test "$TUISH_MOUSE_Y" -gt "$_tuish_rgn_rows"
 				then
-					_tuish_yield=1
-					_tuish_yield_x=$(( TUISH_MOUSE_X + TUISH_VIEW_LEFT ))
-					_tuish_yield_y=$TUISH_MOUSE_ABS_Y
 					tuish_quit
 					return
 				fi
@@ -359,6 +363,31 @@ tuish_run ()
 						fi
 					done
 					_tuish_parse_event "${_esc}"
+					continue 2
+				elif test "$_esc" = '91' && test "${_tuish_byte}" = 'M'
+				then
+					# X10 mouse (ESC [ M cb cx cy): the fallback for a terminal
+					# without SGR-mouse (1006). The three bytes are button/x/y, each
+					# offset by 32. Consume them HERE — otherwise the final-byte
+					# dispatch below fires on 'M' (0x4D, a CSI final) and the three
+					# coordinate bytes leak out as spurious keystrokes. cb-32 is the
+					# same button encoding SGR sends, so it resolves via the same
+					# M-class path. Reads are esc-timeout-bounded so a truncated
+					# report can't hang the loop.
+					local _x10n=0 _x10b='' _x10x='' _x10y=''
+					while test $_x10n -lt 3
+					do
+						_tuish_get_byte "$_tuish_esc_timeout" || break
+						_tuish_ord "${_tuish_byte}"
+						case $_x10n in
+							0) _x10b=$((_tuish_code - 32));;
+							1) _x10x=$((_tuish_code - 32));;
+							2) _x10y=$((_tuish_code - 32));;
+						esac
+						_x10n=$((_x10n + 1))
+					done
+					test $_x10n -eq 3 && \
+						_tuish_parse_event "M ${_x10b} ${_x10x} ${_x10y}"
 					continue 2
 				elif
 					test "$_esc" = '' &&

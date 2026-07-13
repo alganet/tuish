@@ -29,6 +29,15 @@ first argument; buffers are independent. Use `_` when one ad-hoc buffer is enoug
 | `tuish_buf_insert_at BUF IDX VAL` | Insert line at index, shifting others down   |
 | `tuish_buf_delete_at BUF IDX`     | Delete line at index, shifting others up     |
 
+Two guarantees make reads safe under `set -u`:
+
+- `tuish_buf_get BUF IDX` with an out-of-range `IDX` yields an empty
+  `TUISH_BLINE` instead of aborting.
+- `tuish_buf_count BUF` on a never-touched buffer yields `0`.
+
+These matter in practice: a mouse click below the last line used to abort the
+whole application.
+
 ## Variables
 
 `TUISH_BUF_COUNT` and `TUISH_BLINE` are output registers — never storage. Lines

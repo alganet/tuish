@@ -10,7 +10,7 @@
 # dispatcher, emoji sprites, and a DIRTY-SPRITE renderer — the static room is
 # painted once and each tick only erases/redraws the cells that moved. Move with
 # WASD or the arrow keys, jump with Space / W / Up. Reach 🏁, grab 🪙, dodge 👾
-# and the 🌵 / 🔥. R restarts, Ctrl-W quits.
+# and the 🌵 / 🔥. R restarts, Q quits.
 #
 # INPUT: plain VT keyboard — no kitty, no press/release events. A movement key
 # steps the player exactly one tile, immediately — one tap, one tile: precise,
@@ -589,11 +589,11 @@ _draw_coins ()
 _draw_hud ()
 {
 	local _hrow=$(( _map_rows + 1 ))
+	tuish_sgr_reset
+	tuish_clear_to_edge "$_hrow"   # bounded by our width; ESC[K would overrun a host
 	if tuish_vmove "$_hrow" 1
 	then
-		tuish_sgr_reset
-		tuish_clear_to_eol
-		tuish_print "Room ${_room}/${_room_count}  🪙 ${_coins_got}/${_coin_n}  ☠ ${_deaths}   [WASD/←↑→] move  [R] restart  [Ctrl-W] quit"
+		tuish_print "Room ${_room}/${_room_count}  🪙 ${_coins_got}/${_coin_n}  ☠ ${_deaths}   [WASD/←↑→] move  [R] restart  [Q] quit"
 	fi
 	return 0
 }
@@ -657,7 +657,7 @@ _render_win ()
 		"🏆  YOU WIN!" \
 		"" \
 		"Deaths: ${_deaths}" \
-		"[R] play again    [Ctrl-W] quit"
+		"[R] play again    [Q] quit"
 	return 0
 }
 
@@ -787,11 +787,10 @@ _noop () { return 0; }
 _do_quit () { tuish_quit_clear; return 0; }
 
 # ─── Main ────────────────────────────────────────────────────────
-# Entry point. Standalone the bootstrap below calls it; hosted, the host calls it
-# after tuish_ctx_create_region has made our region the active context.
-# Setup (everything but the event loop), split out so a cooperative host can mount
-# and drive the game from its own loop. Keeps tuish_idle_interval here so a driven
-# game still requests its fast tick. Standalone uses _g_main below.
+# Everything but the event loop. Split out of _g_main so a cooperative host can
+# tuish_ctx_mount us and drive us from ITS loop (we never call tuish_run then).
+# Keeps tuish_idle_interval here so a driven game still ASKS for its fast tick — the
+# host adopts it via tuish_ctx_sync_interval and ticks us at it via tuish_ctx_tick.
 _g_setup ()
 {
 	# Fresh game each launch (a host may run us more than once).
@@ -810,10 +809,11 @@ _g_setup ()
 	TICK_DT=$TUISH_TICK_US
 
 	# Bindings must be registered while our context is active (after tuish_init) so
-	# they land in its namespace — hence inside _g_main, not at file scope.
+	# they land in its namespace — hence in here, not at file scope.
 	tuish_bind 'idle'    '_tick'
 	tuish_bind 'resize'  '_on_resize'
 	tuish_bind 'ctrl-w'  '_do_quit'
+	tuish_bind 'char q'  '_do_quit'   # q works everywhere; Ctrl+W is reserved by browsers
 	tuish_bind 'char r'  '_restart'
 	# movement — one tap = one tile; held autorepeat is throttled to RUN_SPEED
 	# tiles/sec (uniform across keyboards), with gravity ticking between steps.
@@ -832,6 +832,8 @@ _g_setup ()
 	_load_room "$_room"
 }
 
+# Entry point for the BLOCKING form: standalone (the bootstrap below) or a modal host
+# that runs us inside a region it created and gets control back when we quit.
 _g_main ()
 {
 	_g_setup

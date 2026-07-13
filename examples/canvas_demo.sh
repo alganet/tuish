@@ -170,14 +170,11 @@ _cd_click ()
 	tuish_request_redraw
 }
 
-# Entry point. Standalone this is called by the bootstrap below; hosted, the host
-# calls it after tuish_ctx_create_region has made our region the active context.
-# The normal lifecycle (tuish_init / tuish_run / tuish_fini) transparently adopts
-# whichever context is active — root when standalone, the region when hosted.
-# Set up everything up to (but not including) the event loop: fresh state, device
-# adoption, handlers, bindings, viewport and first paint. Split out of _cd_main so a
-# cooperative host can MOUNT the demo (run its setup) and then drive it from its own
-# loop, without _cd_main's blocking tuish_run. Standalone still uses _cd_main.
+# Everything up to (but not including) the event loop: fresh state, device adoption,
+# handlers, bindings, viewport, first paint. Split out of _cd_main so a cooperative
+# host can tuish_ctx_mount the demo and drive it from ITS loop, without _cd_main's
+# blocking tuish_run. The normal lifecycle (tuish_init / tuish_fini) transparently
+# adopts whichever context is active — the root standalone, our region when hosted.
 _cd_setup ()
 {
 	# Fresh state each launch (a host may run us more than once).
@@ -188,7 +185,7 @@ _cd_setup ()
 	tuish_init
 	tuish_mouse_on
 	# Bindings must be registered while our context is active, so they land in its
-	# namespace — hence inside _cd_main (after init), not at file scope.
+	# namespace — hence in here (after init), not at file scope.
 	tuish_on_redraw _cd_render
 	tuish_bind 'tab'     '_cd_toggle'
 	tuish_bind 'up'      '_cd_panel_move -1'
@@ -210,6 +207,8 @@ _cd_setup ()
 	_cd_render
 }
 
+# Entry point for the BLOCKING form: standalone (the bootstrap below) or a modal host
+# that runs us inside a region it created and gets control back when we quit.
 _cd_main ()
 {
 	_cd_setup

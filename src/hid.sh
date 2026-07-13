@@ -31,7 +31,10 @@ tuish_ctx_register _tuish_held
 # tracking if it was on, so fini need not read HID-private state directly.
 _tuish_hid_fini ()
 {
-	if test $_tuish_mouse -eq 1; then tuish_mouse_off; fi
+	# Gate on the DEVICE flag, not the active context's _tuish_mouse: on teardown
+	# the mouse-enabling context (a child) may no longer be active, but the escape
+	# is still live on the terminal and must be turned off.
+	if test "${_tuish_mouse_dev:-0}" -eq 1; then tuish_mouse_off; fi
 }
 
 # ─── Keyboard protocol ──────────────────────────────────────────
@@ -86,7 +89,8 @@ tuish_kitty_off ()
 
 tuish_mouse_on ()
 {
-	_tuish_mouse=1
+	_tuish_mouse=1        # per-context: this app wants mouse events
+	_tuish_mouse_dev=1    # device: mouse escapes are now live on the terminal
 	_tuish_write '\033[?1002h'   # button event tracking
 	_tuish_write '\033[?1003h'   # any event tracking
 	_tuish_write '\033[?1006h'   # SGR mouse mode
@@ -98,6 +102,7 @@ tuish_mouse_off ()
 	_tuish_write '\033[?1003l'   # any event tracking off
 	_tuish_write '\033[?1002l'   # button event tracking off
 	_tuish_mouse=0
+	_tuish_mouse_dev=0
 }
 
 tuish_detailed_on ()

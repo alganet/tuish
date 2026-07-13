@@ -13,8 +13,11 @@
 # its loop and feeds each event to the right child (tuish_ctx_dispatch), so both
 # widgets stay live simultaneously: type in the editor while the clock keeps ticking.
 #
-#   Input model — mouse routes by region (whichever box it is over); the keyboard
-#   goes to the editor; idle ticks BOTH children; Ctrl+W quits the host.
+#   Input model — mouse routes by region (whichever box it is over); the keyboard goes
+#   to the editor; idle ticks BOTH children, each at its own negotiated rate (the clock
+#   asks for 1Hz, the editor keeps the default, and the host polls at the faster of the
+#   two). Ctrl+W reaches the editor, which quits itself; the host sees TUISH_CTX_QUIT
+#   and folds — it never has to know which key an embedded app uses to exit.
 #
 # The children are ordinary examples: the editor is unchanged and does not know it is
 # hosted; the clock is a tiny inline widget written the same way an example would be.
@@ -80,6 +83,11 @@ _clk_render ()
 _clk_setup ()
 {
 	tuish_init
+	# A clock displaying whole seconds needs a 1Hz tick, not the host's default ~4Hz —
+	# so it ASKS for one. The host still polls at its own (faster) rate for the sake of
+	# the editor; tuish_ctx_tick divides that down and only wakes us once a second. This
+	# is the point of the negotiation: neither child imposes its clock on the other.
+	tuish_idle_interval 1
 	tuish_on_redraw _clk_render
 	# Re-render each idle tick so the seconds advance without any input.
 	tuish_bind 'idle'   'tuish_request_redraw'
@@ -126,23 +134,6 @@ _coop_in ()   # $1=x $2=y $3=r $4=c $5=w $6=h  -> return 0 if inside
 		&& test "$2" -ge "$3" && test "$2" -lt $(( $3 + $6 ))
 }
 
-# Re-seat a child's region to r,c,w,h (host-absolute) after a resize, so it relayouts
-# into the moved rectangle instead of stale geometry. Mirrors tuish_ctx_create_region's
-# field seeding; the host is fullscreen (identity), so interior cells are absolute.
-_coop_reseat ()   # $1=ctx $2=r $3=c $4=w $5=h
-{
-	local _host=$_tuish_ctx_active
-	tuish_ctx_activate "$1"
-	TUISH_VIEW_TOP=$2; TUISH_VIEW_LEFT=$(( $3 - 1 ))
-	TUISH_VIEW_ROWS=$5; TUISH_VIEW_COLS=$4
-	_tuish_rgn_top=$2; _tuish_rgn_left=$(( $3 - 1 ))
-	_tuish_rgn_rows=$5; _tuish_rgn_cols=$4
-	_tuish_base_lrmin=1; _tuish_base_lrmax=$5
-	_tuish_base_lcmin=1; _tuish_base_lcmax=$4
-	_tuish_tx_reset
-	tuish_ctx_activate "$_host"
-}
-
 # ─── The cooperative router ───────────────────────────────────────
 # The host's event handler. The host loop has already decoded the event in the host
 # context (host-absolute coords); we route it to the right child and drive that child
@@ -159,19 +150,26 @@ _coop_on_event ()
 			fi
 			;;
 		key)
-			case "$TUISH_EVENT" in
-				ctrl-w) tuish_quit_clear;;
-				*)      tuish_ctx_dispatch "$_ed_ctx";;   # keyboard → the editor
-			esac
+			# All keys go to the editor — including its own quit (Ctrl+W). We do
+			# NOT intercept the quit key here; instead we let the editor quit by its
+			# own means and detect it (TUISH_CTX_QUIT), then fold the host. That is
+			# the robust cooperative-quit model: the host never has to know which key
+			# an embedded app uses to exit.
+			tuish_ctx_dispatch "$_ed_ctx"                # keyboard → the editor
+			test "$TUISH_CTX_QUIT" = 1 && tuish_quit_clear
 			;;
 		idle)
-			tuish_ctx_dispatch "$_clk_ctx"               # tick BOTH children
-			tuish_ctx_dispatch "$_ed_ctx"
+			# Tick BOTH children — each at ITS OWN rate. tuish_ctx_tick divides our
+			# loop's tick down per child, so a child that asked for a slower clock is
+			# not sped up by a host polling fast for a sibling (and vice versa: see
+			# tuish_ctx_sync_interval in _coop_main).
+			tuish_ctx_tick "$_clk_ctx"
+			tuish_ctx_tick "$_ed_ctx"
 			;;
 		signal)
 			_coop_lay
-			_coop_reseat "$_clk_ctx" "$_li_r" "$_li_c" "$_li_w" "$_li_h"
-			_coop_reseat "$_ed_ctx"  "$_ri_r" "$_ri_c" "$_ri_w" "$_ri_h"
+			tuish_ctx_reseat "$_clk_ctx" "$_li_r" "$_li_c" "$_li_w" "$_li_h"
+			tuish_ctx_reseat "$_ed_ctx"  "$_ri_r" "$_ri_c" "$_ri_w" "$_ri_h"
 			_coop_frame
 			tuish_ctx_dispatch "$_clk_ctx"
 			tuish_ctx_dispatch "$_ed_ctx"
@@ -194,6 +192,12 @@ _coop_main ()
 	_clk_ctx=$TUISH_CTX
 	tuish_ctx_mount "$_ri_r" "$_ri_c" "$_ri_w" "$_ri_h" _ed_setup
 	_ed_ctx=$TUISH_CTX
+
+	# Adopt the FASTEST tick the two children asked for, so neither is starved by our
+	# loop; tuish_ctx_tick (in the idle branch) then divides it back down per child, so
+	# neither is sped up either. Here: the editor keeps the default ~4Hz and the clock
+	# asked for 1Hz, so we poll at 4Hz and wake the clock every 4th tick.
+	tuish_ctx_sync_interval "$_clk_ctx" "$_ed_ctx"
 
 	# Drive everything from one loop through the router (registered by name in the
 	# host's own context, so the children's handlers are untouched). The router fully

@@ -146,6 +146,14 @@ tuish_put_at ()         { if tuish_vmove "$1" "$2"; then tuish_print "$3"; fi; }
 # draw primitives share one clip-guarded write instead of hand-copying the
 # `if tuish_vmove …; then _tuish_write …; fi` idiom at each single-write site.
 _tuish_write_at ()      { if tuish_vmove "$1" "$2"; then _tuish_write "$3"; fi; }
+# The raw erase primitives. ESC[2K / ESC[K / ESC[1K / ESC[2J act on the PHYSICAL
+# terminal line or screen, so they ignore the viewport and — crucially — a hosted
+# region: from inside a child context they punch straight through into the host's
+# chrome (clear_to_eol eats whatever is to the region's right, clear_to_bol
+# whatever is to its left). Code that may ever run hosted must use
+# tuish_clear_to_edge / tuish_clear_region instead. These stay for root-owned,
+# full-width apps, where they are the cheapest possible erase (one escape, no
+# repeat string).
 tuish_clear_line ()     { _tuish_write '\033[2K'; }
 tuish_clear_to_eol ()   { _tuish_write '\033[K'; }
 tuish_clear_screen ()   { _tuish_write '\033[2J'; }
@@ -283,8 +291,32 @@ tuish_move_down ()      { _tuish_write "\033[${1:-1}B"; }
 tuish_move_right ()     { _tuish_write "\033[${1:-1}C"; }
 tuish_move_left ()      { _tuish_write "\033[${1:-1}D"; }
 
+# tuish_clear_to_edge ROW [COL]
+# Erase logical ROW from COL (default 1) rightward to the edge of the DRAWABLE
+# AREA — the viewport standalone, the region when hosted. This is the region-safe
+# counterpart of tuish_clear_to_eol: ESC[K erases to the end of the physical line,
+# which from inside a hosted region wipes the host's chrome to its right (it ate
+# the editor box's right border in examples/cooperative.sh). Bounded by
+# TUISH_VIEW_COLS, so it degrades to exactly the old behaviour standalone.
+#
+# It erases rather than trims, so callers CLEAR FIRST, THEN PRINT (the reverse of
+# the print-then-ESC[K idiom): the erase needs no knowledge of what will be drawn,
+# and an SGR set before the call (e.g. tuish_reverse) colours the padding.
+tuish_clear_to_edge ()
+{
+	local _cte_c=${2:-1}
+	# TUISH_VIEW_COLS is 0 until a viewport is set (and stays 0 when viewport.sh
+	# is not sourced at all); the whole terminal width is the drawable area then.
+	local _cte_max=$TUISH_VIEW_COLS
+	test $_cte_max -le 0 && _cte_max=$TUISH_COLUMNS
+	local _cte_w=$(( _cte_max - _cte_c + 1 ))
+	test $_cte_w -gt 0 && tuish_clear_region "$1" "$_cte_c" "$_cte_w" 1
+	return 0
+}
+
 # tuish_clear_region ROW COL W H
-# Clear a rectangular area by writing spaces.
+# Clear a rectangular area by writing spaces. Transform-aware (goes through
+# tuish_vmove), so it is clipped to the region when hosted.
 tuish_clear_region ()
 {
 	local _cr_r=$1 _cr_c=$2 _cr_w=$3 _cr_h=$4 _cr_i=0

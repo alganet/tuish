@@ -58,11 +58,18 @@ passed through `eval` — only the bound action strings are evaluated.
 
 ## Internals
 
-Bindings are stored as shell variables named `_tuish_kb_<sanitized>`. The event
-name is sanitized injectively: alphanumerics pass through, and every other byte
-(including a literal `_`) becomes `_<decimal-ord>_`, so two distinct events can
-never collide on one variable name. For example `ctrl-w` → `ctrl_45_w`, `char a`
-→ `char_32_a`, and the `*` catch-all → `_42_`.
+Bindings are stored as shell variables named `_tuish_kb_<NS><sanitized>`. The
+event name is sanitized injectively: alphanumerics pass through, and every other
+byte (including a literal `_`) becomes `_<decimal-ord>_`, so two distinct events
+can never collide on one variable name. For example `ctrl-w` → `ctrl_45_w`,
+`char a` → `char_32_a`, and the `*` catch-all → `_42_`.
+
+The bind table is not one flat global: `<NS>` is the context namespace, empty
+for the **root** context and `c<N>_` for every other context. So the names above
+(e.g. `ctrl-w` → `_tuish_kb_ctrl_45_w`) are the root's; a hosted context binds
+the same event as `_tuish_kb_c2_ctrl_45_w`. Each context gets its own namespace,
+so two apps coexisting in one process cannot collide.
+See [hosting.md](hosting.md).
 
 A `*` binding is the catch-all: it fires for any event with no exact (or
 `prefix *` glob) match.

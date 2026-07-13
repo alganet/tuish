@@ -65,12 +65,18 @@ assert_screen_match    "focus: RIGHT"  "mouse click focuses the right panel (emb
 send_hex 1b 5b 3c 30 3b 31 30 3b 36 4d    # left press @ (10,6) -> left panel
 assert_screen_match    "focus: LEFT"   "mouse click focuses the left panel (embedded)"
 
-# Drive the EMBEDDED app: Tab switches its focus, arrows scroll its list. This
-# input reaches the nested loop, not the host.
-send_hex 09            # Tab
+# Drive the EMBEDDED app: Tab switches its focus, j scrolls its list. This input
+# reaches the nested loop, not the host.
+#
+# It must scroll PAST THE FOLD to prove anything: the right panel is 6 rows tall and
+# starts at the top, so R00-R05 are on screen from the outset and any assertion on
+# R03 would pass with the keys going nowhere. 8 x j drives the selection to line 8,
+# which forces top to 3 — so R08 appears and R00 scrolls out. Assert both ends.
+send_hex 09            # Tab -> focus the right panel
 sleep 0.3
-send_chars 6a 6a 6a    # j j j — scroll the focused panel
-assert_screen_match    "R03"           "keys reach the embedded app (scrolled)"
+send_chars 6a 6a 6a 6a 6a 6a 6a 6a    # j x8
+assert_screen_match    "R08"           "keys reach the embedded app (scrolled past the fold)"
+assert_screen_no_match "R00"           "the embedded app really scrolled (R00 is gone)"
 
 # Ctrl+W quits the embedded app and returns to the host.
 send_hex 17

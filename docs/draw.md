@@ -26,6 +26,11 @@ Auto-detected from locale at source time, stored in `TUISH_DRAW_BACKEND`:
 
 Detection checks the saved locale variables (`_tuish_orig_lc_all`, `_tuish_orig_lc_ctype`, `_tuish_orig_lang`) captured by compat.sh before it sets `LC_ALL=C`.
 
+`TUISH_DRAW_BACKEND` is per-context **state**, seeded from that source-time
+detection: every context starts at the detected value, but an app that switches
+itself to `ascii` no longer leaks that choice to its host or siblings. See
+[hosting.md](hosting.md).
+
 ## Styles
 
 | Style             | Unicode        | ASCII        |
@@ -275,6 +280,10 @@ Visible output (only rows within clip region)
 | `tuish_draw_set_origin ROW COL` | Set origin offset (default: 0 0)       |
 | `tuish_draw_set_clip TOP BOT`   | Enable vertical clipping (screen rows) |
 | `tuish_draw_reset_clip`         | Disable clipping                       |
+
+The draw origin/clip layer (`_tuish_draw_origin_*`, `_tuish_draw_clip*`) is
+per-context too, so an origin or clip set by one app does not bleed into
+another. See [hosting.md](hosting.md).
 
 ### Example: Scrollable Content Area
 
