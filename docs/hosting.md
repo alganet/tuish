@@ -143,6 +143,72 @@ consumed -- closing the child *is* the response to it.
 The host keeps its single loop and feeds each decoded event to the right child.
 No child runs a loop of its own, so every child stays live at once.
 
+**Start with `host.sh`.** The rest of this section is the machinery underneath it, and
+you should read it -- but you should not have to *write* it. [`src/host.sh`](../src/host.sh)
+is what you end up building the second time you host anything, and it already gets the
+parts wrong that are easy to get wrong.
+
+```sh
+. ./src/host.sh                 # after tui.sh + event.sh
+
+tuish_host_pane 4 2 60 20       # the window children are seen through
+
+tuish_host_begin                # declare the children; re-run this whenever the layout moves
+tuish_host_slot clock  _clk_setup '' 4 2  28 20
+tuish_host_slot editor _ed_setup  '' 4 32 30 20
+tuish_host_commit               # mounts, reseats, unmounts, adopts the fastest tick
+
+_render ()
+{
+	tuish_begin
+	_draw_chrome
+	tuish_host_paint            # every child, into THIS frame, focused one last
+	tuish_end
+}
+
+_on_event ()
+{
+	tuish_host_route && return 0    # mouse -> the child under the pointer (a click focuses
+	                                # it); keys -> the focused one; idle -> tick each at its
+	                                # own rate. Returns 1 if nothing took it.
+	tuish_dispatch || :             # ... and then it is the host's
+}
+```
+
+| Function                                   | Purpose                                                     |
+|--------------------------------------------|-------------------------------------------------------------|
+| `tuish_host_pane R C W H`                  | The window children are seen through; they clip to it        |
+| `tuish_host_begin`                         | Start (re)declaring the child list                          |
+| `tuish_host_slot ID FN [ARG] R C W H [modal]` | One child, and where it goes                             |
+| `tuish_host_commit`                        | Reconcile: mount, reseat, unmount, adopt the fastest tick    |
+| `tuish_host_paint`                         | Render live children into the host's open frame              |
+| `tuish_host_paint_focus`                   | Render only the focused child (cheap partial repaints)       |
+| `tuish_host_route`                         | The standard router; returns 1 if nothing took the event     |
+| `tuish_host_focus [ID]`                    | Get / set the child holding the keyboard (`''` = the host)   |
+| `tuish_host_at X Y`                        | Which child is under (x,y)? -> `TUISH_HOST_HIT`              |
+| `tuish_host_owns_row ROW`                  | Does a live child own that screen row?                       |
+| `tuish_host_ctx ID`                        | That child's context -> `TUISH_HOST_CTX`                     |
+| `tuish_host_drop ID` / `tuish_host_clear`  | Unmount one / all                                            |
+
+Three things it gets right that a hand-rolled host usually does not:
+
+- **`ID` is not the rectangle.** A scrolling host re-declares every child at a new row on
+  every wheel tick. Reconciling on identity means those children are *reseated*, not torn
+  down and remounted — and a mount **paints**, so remounting them all would redraw the
+  page widget by widget, one write each, before the real repaint even started.
+- **The focused child paints last**, which is the only reason the caret ends up where you
+  are typing rather than wherever the next widget's last cell landed.
+- **An event a child declines comes back** (see [Scroll chaining](#scroll-chaining)).
+
+After routing, `TUISH_HOST_DROVE` holds the id it handed the event to and
+`TUISH_HOST_QUIT` the id of a child that ended itself — so you can wrap the standard
+policy instead of forking it. What a child quitting *means* is yours to decide; route does
+not unmount it for you.
+
+`examples/cooperative.sh` is the whole thing in ~30 lines.
+
+### The primitives underneath
+
 | Function                        | Purpose                                                        |
 |---------------------------------|----------------------------------------------------------------|
 | `tuish_ctx_mount R C W H FN...` | Create a region, run the child's (non-blocking) `FN` setup in it, leave the host active |
@@ -246,16 +312,18 @@ The child's output enters the buffer at the point you called from, so render chi
 `tuish_ctx_mount` does the same with the child's first paint, so mounting a widget in
 response to a click does not flash it onto the screen a frame before the page around it.
 
-**Clip a child from its FIRST paint.** `tuish_ctx_mount` does not merely create a
-context — it runs the child's setup *and paints it*. A child mounted while already
-partly outside the pane would draw over the host's chrome once, before any reseat
-could bound it. Set `TUISH_MOUNT_CLIP` (`"R C W H"`, the host's logical coords) and
-`tuish_ctx_mount` applies it before the child's first paint:
+**Declare the pane once.** `tuish_ctx_clip R C W H` says "the children of this context
+are seen through this window". `tuish_ctx_mount` and `tuish_ctx_reseat` both honour it,
+so you say it in your layout and never again:
 
 ```sh
-TUISH_MOUNT_CLIP="$_pane_r $_pane_c $_pane_w $_pane_h"
-tuish_ctx_mount "$_r" "$_c" "$_w" "$_h" _app_setup
+tuish_ctx_clip "$_pane_r" "$_pane_c" "$_pane_w" "$_pane_h"
+tuish_ctx_mount "$_r" "$_c" "$_w" "$_h" _app_setup     # clipped from its first paint
 ```
+
+That "first paint" matters. `tuish_ctx_mount` does not merely create a context — it runs
+the child's setup *and paints it*. A child mounted while already partly outside the pane
+would draw over the host's chrome once, before any reseat could bound it.
 
 **Clipping only holds for drawing that goes through the transform**, which is
 everything except the raw escapes. Two rules for an app that may be clipped:

@@ -50,8 +50,9 @@ tuish_start
 - **App-in-app hosting** -- run a whole tuish app inside a region of
   another, in one process with no forks. Either modally (the child takes
   the keyboard until it quits) or **cooperatively**: one event loop driving
-  several live children at once, each ticking at its own negotiated rate.
-  See [hosting.md](docs/hosting.md).
+  several live children at once, each ticking at its own negotiated rate,
+  clipped to a scrolling pane, with focus and browser-style scroll chaining.
+  `host.sh` does the bookkeeping. See [hosting.md](docs/hosting.md).
 
 ## Supported Shells
 
@@ -83,6 +84,7 @@ is optional -- pick what you need:
 | `keybind.sh`  | Declarative event-to-action dispatch            |
 | `clip.sh`     | System clipboard (OSC 52)                       |
 | `draw.sh`     | Box drawing with styles and junctions           |
+| `host.sh`     | Hosting several live apps in one loop           |
 
 ## Examples
 

@@ -783,7 +783,9 @@ _on_resize ()
 	_need_full=1; _render_frame
 	return 0
 }
-_noop () { return 0; }
+# Bound as the catch-all. tuish_pass, not a bare no-op: "I did nothing with this"
+# has to reach a HOST, or an event we ignore is an event it never sees.
+_noop () { tuish_pass; return 0; }
 _do_quit () { tuish_quit_clear; return 0; }
 
 # ─── Main ────────────────────────────────────────────────────────

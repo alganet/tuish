@@ -13,14 +13,19 @@
 # its loop and feeds each event to the right child (tuish_ctx_dispatch), so both
 # widgets stay live simultaneously: type in the editor while the clock keeps ticking.
 #
-#   Input model — mouse routes by region (whichever box it is over); the keyboard goes
-#   to the editor; idle ticks BOTH children, each at its own negotiated rate (the clock
-#   asks for 1Hz, the editor keeps the default, and the host polls at the faster of the
-#   two). Ctrl+W reaches the editor, which quits itself; the host sees TUISH_CTX_QUIT
-#   and folds — it never has to know which key an embedded app uses to exit.
+#   Input model — host.sh routes it. Click a box to focus it; the keyboard goes to
+#   whichever is focused; idle ticks BOTH children, each at its own negotiated rate (the
+#   clock asks for 1Hz, the editor keeps the default, and the host polls at the faster of
+#   the two). Ctrl+W reaches the editor, which quits itself; the host sees the id come
+#   back in TUISH_HOST_QUIT and folds — it never has to know which key an embedded app
+#   uses to exit.
 #
 # The children are ordinary examples: the editor is unchanged and does not know it is
 # hosted; the clock is a tiny inline widget written the same way an example would be.
+#
+# The whole host is ~30 lines, because src/host.sh owns the child table and the rules.
+# It used to hand-roll its own rect test, its own per-child mouse routing, its own tick
+# loop and its own reseat-on-resize — and it still had no focus model at all.
 
 # ─── Bootstrap ────────────────────────────────────────────────────
 # Runs top-level (a host), but guard like the examples so it could itself be hosted
@@ -42,6 +47,7 @@ then
 	. "${_src}/buf.sh"
 	. "${_src}/draw.sh"
 	. "${_src}/keybind.sh"
+	. "${_src}/host.sh"
 	_coop_ex="${_coop_dir}"
 else
 	_coop_standalone=0
@@ -92,7 +98,10 @@ _clk_setup ()
 	# Re-render each idle tick so the seconds advance without any input.
 	tuish_bind 'idle'   'tuish_request_redraw'
 	tuish_bind 'resize' 'tuish_request_redraw'
-	tuish_bind '*'      ':'
+	# tuish_pass, not ':' — a clock acts on nothing, and ':' would silently EAT every
+	# event the host offers it, so the wheel over the clock would kill the host's
+	# scrolling instead of chaining back to it. Say "not mine", not "mine, ignored".
+	tuish_bind '*'      'tuish_pass'
 	tuish_viewport fullscreen     # hosted → fills our region (no alt-screen)
 	_clk_render
 }
@@ -112,69 +121,66 @@ _coop_lay ()
 	_ri_r=$(( _top + 1 )); _ri_c=$(( _rc + 1 )); _ri_w=$(( _half - 2 )); _ri_h=$(( _bh - 2 ))
 }
 
-_coop_frame ()
+# Declare where the two children go. Called on first paint and on every resize — the
+# rectangles change, the ids do not, and that is exactly what tuish_host_commit keys on:
+# it reseats the children it already has rather than tearing them down and remounting.
+_coop_slots ()
 {
+	tuish_host_begin
+	tuish_host_slot clock  _clk_setup '' "$_li_r" "$_li_c" "$_li_w" "$_li_h"
+	tuish_host_slot editor _ed_setup  '' "$_ri_r" "$_ri_c" "$_ri_w" "$_ri_h"
+	tuish_host_commit
+}
+
+# The whole repaint: chrome, then the children, in ONE frame. tuish_host_paint renders
+# each child into this frame (so it is one write, not three) and paints the FOCUSED one
+# last, so the terminal's caret ends up where the editor put it rather than wherever the
+# clock's last cell happened to be.
+_coop_render ()
+{
+	_coop_lay
 	tuish_begin
 	tuish_draw_fill 1 1 "$_W" "$_H" bg=$C_BG
 	tuish_text 1 2 "cooperative — one loop, two live apps" fg=$C_ACCENT bg=$C_BG
-	local _hint='mouse: focus a box · type: editor · Ctrl+W: quit'
+	local _hint='click a box to focus it · Ctrl+W: quit'
 	tuish_str_width _hint; local _hw=$TUISH_SWIDTH
 	tuish_text 1 $(( _W - _hw )) "$_hint" fg=$C_DIM bg=$C_BG
-	tuish_draw_box "$_top" "$_lc" "$_half" "$_bh" fg=$C_BORDER bg=$C_BG style=rounded
+
+	# The focused box gets the bright border — the whole point of having a focus model.
+	local _clkfg=$C_BORDER _edfg=$C_BORDER
+	case "$(tuish_host_focus)" in
+		clock)  _clkfg=$C_ACCENT;;
+		editor) _edfg=$C_ACCENT;;
+	esac
+	tuish_draw_box "$_top" "$_lc" "$_half" "$_bh" fg=$_clkfg bg=$C_BG style=rounded
 	tuish_text "$_top" $(( _lc + 2 )) " clock " fg=$C_ACCENT2 bg=$C_BG
-	tuish_draw_box "$_top" "$_rc" "$_half" "$_bh" fg=$C_ACCENT bg=$C_BG style=rounded
+	tuish_draw_box "$_top" "$_rc" "$_half" "$_bh" fg=$_edfg bg=$C_BG style=rounded
 	tuish_text "$_top" $(( _rc + 2 )) " editor " fg=$C_ACCENT bg=$C_BG
+
+	tuish_host_paint
 	tuish_end
 }
 
-# Is host-absolute (x,y) inside the interior rectangle r,c,w,h?
-_coop_in ()   # $1=x $2=y $3=r $4=c $5=w $6=h  -> return 0 if inside
-{
-	test "$1" -ge "$4" && test "$1" -lt $(( $4 + $5 )) \
-		&& test "$2" -ge "$3" && test "$2" -lt $(( $3 + $6 ))
-}
-
 # ─── The cooperative router ───────────────────────────────────────
-# The host's event handler. The host loop has already decoded the event in the host
-# context (host-absolute coords); we route it to the right child and drive that child
-# with the same raw descriptor via tuish_ctx_dispatch (which re-resolves it in the
-# child's region-local frame). Nothing here runs a nested loop.
+# tuish_host_route is the whole router: mouse → the child under the pointer (a click
+# focuses it), keys → the focused child, idle → tick every child at its own rate. It
+# returns 1 when nothing took the event, which is when the host's own bindings run.
+#
+# We do not intercept the editor's quit key. It quits by its own means, and route hands
+# back the id in TUISH_HOST_QUIT — so the host never has to know which key an embedded
+# app exits on.
 _coop_on_event ()
 {
-	case "$TUISH_EVENT_KIND" in
-		mouse)
-			if _coop_in "$TUISH_MOUSE_X" "$TUISH_MOUSE_Y" "$_li_r" "$_li_c" "$_li_w" "$_li_h"
-			then tuish_ctx_dispatch "$_clk_ctx"
-			elif _coop_in "$TUISH_MOUSE_X" "$TUISH_MOUSE_Y" "$_ri_r" "$_ri_c" "$_ri_w" "$_ri_h"
-			then tuish_ctx_dispatch "$_ed_ctx"
-			fi
-			;;
-		key)
-			# All keys go to the editor — including its own quit (Ctrl+W). We do
-			# NOT intercept the quit key here; instead we let the editor quit by its
-			# own means and detect it (TUISH_CTX_QUIT), then fold the host. That is
-			# the robust cooperative-quit model: the host never has to know which key
-			# an embedded app uses to exit.
-			tuish_ctx_dispatch "$_ed_ctx"                # keyboard → the editor
-			test "$TUISH_CTX_QUIT" = 1 && tuish_quit_clear
-			;;
-		idle)
-			# Tick BOTH children — each at ITS OWN rate. tuish_ctx_tick divides our
-			# loop's tick down per child, so a child that asked for a slower clock is
-			# not sped up by a host polling fast for a sibling (and vice versa: see
-			# tuish_ctx_sync_interval in _coop_main).
-			tuish_ctx_tick "$_clk_ctx"
-			tuish_ctx_tick "$_ed_ctx"
-			;;
-		signal)
-			_coop_lay
-			tuish_ctx_reseat "$_clk_ctx" "$_li_r" "$_li_c" "$_li_w" "$_li_h"
-			tuish_ctx_reseat "$_ed_ctx"  "$_ri_r" "$_ri_c" "$_ri_w" "$_ri_h"
-			_coop_frame
-			tuish_ctx_dispatch "$_clk_ctx"
-			tuish_ctx_dispatch "$_ed_ctx"
-			;;
+	if test "$TUISH_EVENT_KIND" = 'signal'
+	then _coop_lay; _coop_slots; _coop_render; return 0; fi
+
+	tuish_host_route || :
+	test -n "$TUISH_HOST_QUIT" && { tuish_quit_clear; return 0; }
+	case "$TUISH_EVENT" in
+		*clik) tuish_request_redraw;;      # the focus ring moved
 	esac
+	tuish_dispatch || :
+	return 0
 }
 
 # ─── Host entry ───────────────────────────────────────────────────
@@ -184,30 +190,17 @@ _coop_main ()
 	tuish_mouse_on
 	tuish_viewport fullscreen
 	_coop_lay
-	_coop_frame
 
-	# Mount both children: each runs its non-blocking setup in a region of ours and
-	# paints itself; we keep the loop. tuish_ctx_mount returns the child id in TUISH_CTX.
-	tuish_ctx_mount "$_li_r" "$_li_c" "$_li_w" "$_li_h" _clk_setup
-	_clk_ctx=$TUISH_CTX
-	tuish_ctx_mount "$_ri_r" "$_ri_c" "$_ri_w" "$_ri_h" _ed_setup
-	_ed_ctx=$TUISH_CTX
+	tuish_on_redraw _coop_render
+	tuish_on_event  _coop_on_event
 
-	# Adopt the FASTEST tick the two children asked for, so neither is starved by our
-	# loop; tuish_ctx_tick (in the idle branch) then divides it back down per child, so
-	# neither is sped up either. Here: the editor keeps the default ~4Hz and the clock
-	# asked for 1Hz, so we poll at 4Hz and wake the clock every 4th tick.
-	tuish_ctx_sync_interval "$_clk_ctx" "$_ed_ctx"
-
-	# Drive everything from one loop through the router (registered by name in the
-	# host's own context, so the children's handlers are untouched). The router fully
-	# owns routing, so the host needs no bindings of its own.
-	tuish_on_event _coop_on_event
+	_coop_slots                     # mounts both children, adopts the fastest tick
+	tuish_host_focus editor         # the editor starts with the keyboard
+	_coop_render
 
 	tuish_run || :
 
-	tuish_ctx_unmount "$_ed_ctx"    # the editor's own fini hook restores the cursor
-	tuish_ctx_unmount "$_clk_ctx"
+	tuish_host_clear                # the editor's own fini hook restores the cursor
 	tuish_fini
 }
 

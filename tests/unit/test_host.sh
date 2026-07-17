@@ -1,0 +1,215 @@
+#!/bin/sh
+
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+#
+# SPDX-License-Identifier: ISC
+
+# Unit tests for src/host.sh — hosting several live children in one loop.
+#
+# No terminal: tuish_init is never called, and _tuish_out is stubbed, so nothing reaches a
+# device. The children are two-line fakes that record what they were asked to do; what is
+# under test is the HOST's behaviour — reconciliation, clipping, hit testing, focus,
+# paint ordering and scroll chaining.
+
+set -euf
+
+TESTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+. "$TESTS_DIR/lib/test_framework.sh"
+
+. "$TESTS_DIR/../src/compat.sh"
+. "$TESTS_DIR/../src/ord.sh"
+. "$TESTS_DIR/../src/tui.sh"
+. "$TESTS_DIR/../src/term.sh"
+. "$TESTS_DIR/../src/event.sh"
+. "$TESTS_DIR/../src/hid.sh"
+. "$TESTS_DIR/../src/viewport.sh"
+. "$TESTS_DIR/../src/str.sh"
+. "$TESTS_DIR/../src/keybind.sh"
+. "$TESTS_DIR/../src/host.sh"
+
+printf 'Unit tests: hosting (src/host.sh)\n'
+
+TUISH_LINES=30
+TUISH_COLUMNS=100
+
+_tuish_out () { :; }                 # nothing reaches a device
+stty () { :; }                       # ... and no device is touched
+
+tuish_ctx_create
+TUISH_CTX_ROOT=$TUISH_CTX
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+TUISH_VIEW_ROWS=$TUISH_LINES
+TUISH_VIEW_COLS=$TUISH_COLUMNS
+
+# --- The children -------------------------------------------------------------
+# _mounts counts how many times each was MOUNTED, which is the thing reconciliation is
+# supposed to avoid; _paints records paint ORDER, which is what the caret depends on.
+_mounts_a=0; _mounts_b=0
+_paints=''
+_wheel_a=0
+_a_can_scroll=1                       # flip to 0 to make child A decline the wheel
+
+_a_paint () { _paints="$_paints a"; }
+_b_paint () { _paints="$_paints b"; }
+
+# NOTE: no tuish_init. A real hosted app calls it (it ADOPTS the context the mount made,
+# because the device is already up); here there is no device, and tuish_init would bring
+# one up and take the context with it. These are fakes — they just register themselves in
+# whatever context host.sh mounted them into.
+_a_setup ()
+{
+	_mounts_a=$(( _mounts_a + 1 ))
+	_tuish_mouse=1
+	tuish_on_redraw _a_paint
+	tuish_bind 'wdown' '_wheel_a=$((_wheel_a + 1)); test $_a_can_scroll -eq 0 && tuish_pass'
+	tuish_bind 'char x' ':'
+}
+
+_b_setup ()
+{
+	_mounts_b=$(( _mounts_b + 1 ))
+	_tuish_mouse=1
+	tuish_on_redraw _b_paint
+	tuish_bind '*' 'tuish_pass'        # a picture: acts on nothing
+}
+
+# --- Reconciliation -----------------------------------------------------------
+# The point of an id: it survives a rebuild, so a host that re-declares its children for a
+# reason that has nothing to do with most of them does not tear them all down. Remounting
+# is not free — a mount PAINTS.
+tuish_host_pane 3 2 40 10
+
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 3 2 20 4
+tuish_host_commit
+assert_eq "$_mounts_a" "1" "reconcile: a new child is mounted"
+
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 3 2 20 4     # same id, same rect
+tuish_host_commit
+assert_eq "$_mounts_a" "1" "reconcile: an unchanged child is NOT remounted"
+
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 6 2 20 4     # same id, MOVED (a scroll)
+tuish_host_commit
+assert_eq "$_mounts_a" "1" \
+	"reconcile: a child that only MOVED is reseated, not remounted (the rect is not its identity)"
+
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 6 2 20 4
+tuish_host_slot beta  _b_setup '' 3 24 12 4    # a second child appears
+tuish_host_commit
+assert_eq "$_mounts_a" "1" "reconcile: adding a sibling does not remount the first"
+assert_eq "$_mounts_b" "1" "reconcile: ... and the new one mounts"
+
+tuish_host_ctx alpha; _ctx_a=$TUISH_HOST_CTX
+assert_eq "$(test -n "$_ctx_a" && echo yes)" "yes" "reconcile: the surviving child kept its context"
+
+tuish_host_begin
+tuish_host_slot beta _b_setup '' 3 24 12 4     # alpha is gone from the declaration
+tuish_host_commit
+tuish_host_ctx alpha
+assert_eq "$TUISH_HOST_CTX" "" "reconcile: a child that vanished from the list is unmounted"
+
+# --- Off-pane children unmount, half-visible ones clip -------------------------
+tuish_host_begin
+tuish_host_slot beta  _b_setup '' 3 24 12 4
+tuish_host_slot alpha _a_setup '' 40 2 20 4    # scrolled far below the pane (rows 3..12)
+tuish_host_commit
+tuish_host_ctx alpha
+assert_eq "$TUISH_HOST_CTX" "" "offpane: a child scrolled wholly out of sight is unmounted"
+
+tuish_host_begin
+tuish_host_slot beta  _b_setup '' 3 24 12 4
+tuish_host_slot alpha _a_setup '' 1 2 20 4     # top two rows above the pane
+tuish_host_commit
+tuish_host_ctx alpha; _ctx_a=$TUISH_HOST_CTX
+assert_eq "$(test -n "$_ctx_a" && echo yes)" "yes" "clip: a HALF-visible child stays mounted"
+
+# It is occluded, not resized: it still thinks it is 4 rows tall, or it would reflow as
+# you scrolled past it.
+tuish_ctx_activate "$_ctx_a"
+_rows=$TUISH_VIEW_ROWS
+_lrmin=$_tuish_base_lrmin
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+assert_eq "$_rows" "4" "clip: ... and keeps its full height — occluded, not reflowed"
+assert_eq "$_lrmin" "3" "clip: ... with its first two rows clipped away (pane starts at row 3)"
+
+# --- Hit testing is clip-aware ------------------------------------------------
+# You cannot click what you cannot see. alpha spans screen rows 1..4, but rows 1-2 are
+# behind the host's chrome.
+tuish_host_at 5 2
+assert_eq "$TUISH_HOST_HIT" "" "hit: the hidden half of a clipped child is not clickable"
+tuish_host_at 5 3
+assert_eq "$TUISH_HOST_HIT" "alpha" "hit: its visible half is"
+tuish_host_at 5 20
+assert_eq "$TUISH_HOST_HIT" "" "hit: empty pane is nobody's"
+
+assert_eq "$(tuish_host_owns_row 3 && echo yes || echo no)" "yes" \
+	"rows: a host asking what to paint around is told row 3 belongs to a child"
+assert_eq "$(tuish_host_owns_row 2 && echo yes || echo no)" "no" \
+	"rows: ... but not the row above the pane"
+
+# --- Paint order: the focused child LAST --------------------------------------
+# The caret depends on it: a child shows the cursor where it wants it, and the next child
+# to paint would drag the terminal's cursor off into the middle of its own box.
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 3 2 20 4
+tuish_host_slot beta  _b_setup '' 3 24 12 4
+tuish_host_commit
+
+_paints=''
+tuish_host_focus alpha
+tuish_begin; tuish_host_paint; tuish_end
+assert_eq "$_paints" " b a" "paint: the FOCUSED child is painted last"
+
+_paints=''
+tuish_host_focus beta
+tuish_begin; tuish_host_paint; tuish_end
+assert_eq "$_paints" " a b" "paint: ... whichever one it is"
+
+_paints=''
+tuish_host_focus ''
+tuish_begin; tuish_host_paint; tuish_end
+assert_eq "$_paints" " a b" "paint: with nothing focused, declaration order"
+
+# --- Routing and scroll chaining ----------------------------------------------
+tuish_host_focus ''
+
+TUISH_RAW='M 0 5 4'                            # a click inside alpha
+_tuish_parse_event "$TUISH_RAW"                # decode it in the host's frame
+tuish_host_route || :
+assert_eq "$(tuish_host_focus)" "alpha" "route: a click focuses the child under the pointer"
+
+TUISH_RAW='M 65 5 4'                           # wheel down, over alpha
+_tuish_parse_event "$TUISH_RAW"
+_a_can_scroll=1
+if tuish_host_route; then _took=1; else _took=0; fi
+assert_eq "$_wheel_a" "1" "chain: the wheel reaches the child under the pointer"
+assert_eq "$_took" "1"    "chain: a child that ACTS on the wheel consumes it"
+
+TUISH_RAW='M 65 5 4'
+_tuish_parse_event "$TUISH_RAW"
+_a_can_scroll=0                                # already at the bottom: it passes
+if tuish_host_route; then _took=1; else _took=0; fi
+assert_eq "$_wheel_a" "2" "chain: the binding still runs"
+assert_eq "$_took" "0"    "chain: ... but a child that DECLINES hands the event back to the host"
+
+# The same wheel over a child that has no wheel binding at all.
+TUISH_RAW='M 65 30 4'                          # over beta
+_tuish_parse_event "$TUISH_RAW"
+if tuish_host_route; then _took=1; else _took=0; fi
+assert_eq "$_took" "0" "chain: a child with no binding for it never swallows it"
+
+# A MODAL child owns its region: there is nothing behind it to scroll, so it consumes.
+tuish_host_begin
+tuish_host_slot solo _a_setup '' 3 2 40 10 modal
+tuish_host_commit
+tuish_host_focus solo
+TUISH_RAW='M 65 5 4'
+_tuish_parse_event "$TUISH_RAW"
+_a_can_scroll=0                                # it declines...
+if tuish_host_route; then _took=1; else _took=0; fi
+assert_eq "$_took" "1" "chain: ... but a MODAL child consumes the event anyway"
+
+test_summary
