@@ -57,15 +57,29 @@ _bx_style_name ()
 
 # ─── Draw helpers (style/color; clipping is handled by draw.sh) ──
 
-_bx_label ()
+# A dim label at a VIEWPORT cell, guarded on tuish_vmove.
+#
+# The guard is the whole point: tuish_vmove REFUSES a clipped cell (non-zero return),
+# and printing anyway drops the text at whatever cell the cursor last happened to sit
+# on. Standalone that almost never bites, because a cell is rejected only off-screen.
+# Hosted in a CLIPPED region — a live widget scrolled under a doc pane's edge — it
+# fires constantly, and the symptom is stray labels smeared across the host's chrome.
+# A row/column bounds test is not a substitute: TUISH_VIEW_ROWS is the layout height,
+# which stays full-size while the visible clip shrinks. Only vmove knows.
+_bx_dim_at ()   # $1=row (viewport) $2=col $3=text
 {
-	local _r=$(($1 - _bx_scroll))
-	test $_r -lt 2 && return 0
-	test $_r -gt $TUISH_VIEW_ROWS && return 0
-	tuish_vmove "$_r" "$2"
+	# Row 1 is the fixed header, and the root context's clip has no upper edge, so a
+	# scrolled-off row (0 or negative) would still resolve to a cell. Keep the bound.
+	test "$1" -lt 2 && return 0
+	tuish_vmove "$1" "$2" || return 0
 	tuish_dim
 	tuish_print "$3"
 	tuish_sgr_reset
+}
+
+_bx_label ()
+{
+	_bx_dim_at "$(( $1 - _bx_scroll ))" "$2" "$3"
 }
 
 _bx_box ()
@@ -251,17 +265,10 @@ _bx_page_content ()
 	# Labels inside the composed layout
 	local _lr
 	_lr=$((35 - _bx_scroll))
-	if test $_lr -ge 2 && test $_lr -le $TUISH_VIEW_ROWS; then
-		tuish_vmove $_lr 4
-		tuish_dim; tuish_print 'Header'; tuish_sgr_reset
-	fi
+	_bx_dim_at $_lr 4 'Header'
 	_lr=$((37 - _bx_scroll))
-	if test $_lr -ge 2 && test $_lr -le $TUISH_VIEW_ROWS; then
-		tuish_vmove $_lr 4
-		tuish_dim; tuish_print 'Nav'; tuish_sgr_reset
-		tuish_vmove $_lr 18
-		tuish_dim; tuish_print 'Content area'; tuish_sgr_reset
-	fi
+	_bx_dim_at $_lr 4 'Nav'
+	_bx_dim_at $_lr 18 'Content area'
 
 	# ── Row 6: Color palette ──
 	_bx_label 45 2 'color palette:'
@@ -352,17 +359,10 @@ _bx_page_mixed ()
 
 	local _lr
 	_lr=$((31 - _bx_scroll))
-	if test $_lr -ge 2 && test $_lr -le $TUISH_VIEW_ROWS; then
-		tuish_vmove $_lr 4
-		tuish_dim; tuish_print 'Header'; tuish_sgr_reset
-	fi
+	_bx_dim_at $_lr 4 'Header'
 	_lr=$((33 - _bx_scroll))
-	if test $_lr -ge 2 && test $_lr -le $TUISH_VIEW_ROWS; then
-		tuish_vmove $_lr 4
-		tuish_dim; tuish_print 'Nav'; tuish_sgr_reset
-		tuish_vmove $_lr 18
-		tuish_dim; tuish_print 'Content area'; tuish_sgr_reset
-	fi
+	_bx_dim_at $_lr 4 'Nav'
+	_bx_dim_at $_lr 18 'Content area'
 
 	_bx_label 29 54 'heavy frame + light internals:'
 	tuish_draw_box 30 54 24 10 style=heavy fg=2
@@ -371,17 +371,10 @@ _bx_page_mixed ()
 	tuish_draw_tee 32 65 d style=light fg=2
 
 	_lr=$((31 - _bx_scroll))
-	if test $_lr -ge 2 && test $_lr -le $TUISH_VIEW_ROWS; then
-		tuish_vmove $_lr 56
-		tuish_dim; tuish_print 'Title'; tuish_sgr_reset
-	fi
+	_bx_dim_at $_lr 56 'Title'
 	_lr=$((33 - _bx_scroll))
-	if test $_lr -ge 2 && test $_lr -le $TUISH_VIEW_ROWS; then
-		tuish_vmove $_lr 56
-		tuish_dim; tuish_print 'Side'; tuish_sgr_reset
-		tuish_vmove $_lr 67
-		tuish_dim; tuish_print 'Main'; tuish_sgr_reset
-	fi
+	_bx_dim_at $_lr 56 'Side'
+	_bx_dim_at $_lr 67 'Main'
 
 	# ── Section 5: junction char reference ──
 	_bx_label 41 2 'junction reference (style:join):'

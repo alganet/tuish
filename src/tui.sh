@@ -572,6 +572,23 @@ tuish_ctx_dispatch ()
 	tuish_ctx_activate "$_host"
 }
 
+# Repaint mounted child $1 NOW: run its registered render handler at level -1 (full)
+# inside its own context, so its transform and clip apply. A cooperative host calls
+# this straight after tuish_ctx_reseat, so a child that just MOVED redraws into its new
+# rectangle immediately instead of waiting for its next idle tick — at a lazy interval
+# that would leave a visibly stale or torn widget on screen for a whole tick while the
+# user scrolls. Requires event.sh (the render-handler indirection lives there).
+tuish_ctx_render ()
+{
+	local _host=$_tuish_ctx_active
+	tuish_ctx_activate "$1"
+	tuish_begin
+	"${_tuish_render_fn:-tuish_on_redraw}" -1
+	tuish_end
+	tuish_ctx_activate "$_host"
+	return 0
+}
+
 # ─── Idle-tick negotiation ───────────────────────────────────────
 # Children can want different clocks: a game at 50Hz next to a clock at 1Hz. Two
 # rules make that work, and they pull in opposite directions:
@@ -642,13 +659,39 @@ tuish_ctx_sync_interval ()   # $@ = child ctx ids
 #
 # The child's chosen tick (its tuish_idle_interval) is left in its own frame; after
 # mounting all children, the host calls tuish_ctx_sync_interval to adopt the fastest.
+# Optional clip window ("R C W H", the host's logical coords) for the NEXT
+# tuish_ctx_mount. Set it when the child must be clipped from its VERY FIRST paint:
+# a mount is not just bookkeeping, it runs the child's setup and paints it, so a
+# child mounted partly outside its host's pane would draw over the host's chrome once
+# before any tuish_ctx_reseat could bound it. Consumed and cleared by tuish_ctx_mount.
+TUISH_MOUNT_CLIP=''
+
 tuish_ctx_mount ()
 {
 	local _r=$1 _c=$2 _w=$3 _h=$4 _fn=$5
 	shift 5
 	local _host=$_tuish_ctx_active
+
+	# Resolve the clip window in the HOST's frame — it has to happen here, before
+	# create_region switches us into the child's.
+	local _clip=0 _cab_r=0 _cab_c=0 _ccw=0 _cch=0
+	if test -n "$TUISH_MOUNT_CLIP"
+	then
+		local _q="$TUISH_MOUNT_CLIP" _qr _qc
+		_qr="${_q%% *}"; _q="${_q#* }"
+		_qc="${_q%% *}"; _q="${_q#* }"
+		_ccw="${_q%% *}"; _cch="${_q##* }"
+		_cab_r=$(( TUISH_VIEW_TOP + _tx_off_r + (_qr - 1) * _tx_ch ))
+		_cab_c=$(( TUISH_VIEW_LEFT + _tx_off_c + (_qc - 1) * _tx_cw ))
+		_clip=1
+	fi
+	TUISH_MOUNT_CLIP=''
+
 	tuish_ctx_create_region "$_r" "$_c" "$_w" "$_h"
 	local _child=$TUISH_CTX
+	test "$_clip" -eq 1 && _tuish_ctx_seat \
+		"$TUISH_VIEW_TOP" "$TUISH_VIEW_LEFT" "$_w" "$_h" \
+		"$_cab_r" "$_cab_c" "$_ccw" "$_cch"
 	"$_fn" "$@"
 	# Bootstrap idle: the exact first event tuish_run gives a standalone app, so
 	# an idle-first app (one that paints on its first idle) renders NOW, at mount,
