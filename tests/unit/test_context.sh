@@ -218,4 +218,45 @@ tuish_ctx_dispatch "$_kid"
 assert_eq "$TUISH_CTX_HANDLED" "0" \
 	"chaining: an event with no binding at all is not handled"
 
+# --- One host frame, one write -----------------------------------------------
+# A host that repaints itself and then its children must not emit a write per child:
+# the terminal draws each one, so the page lands at its new scroll offset a frame
+# before the widgets do. tuish_ctx_render splices into the host's buffer instead.
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+
+_writes=0
+_tuish_out () { _writes=$((_writes + 1)); }     # count trips to the terminal
+
+_paint () { tuish_text 1 1 "child"; }
+
+tuish_ctx_create_region 2 2 8 3
+_w1=$TUISH_CTX
+tuish_on_redraw _paint
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+
+tuish_ctx_create_region 6 2 8 3
+_w2=$TUISH_CTX
+tuish_on_redraw _paint
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+
+tuish_begin                                    # the host opens a frame ...
+tuish_text 1 1 'page'
+tuish_ctx_render "$_w1"
+tuish_ctx_render "$_w2"
+assert_eq "$_writes" "0" \
+	"frame: rendering children inside a host frame writes nothing yet"
+case "$_tuish_buf" in
+	*page*child*child*) assert_eq "spliced" "spliced" \
+		"frame: the children's output is spliced into the host's buffer, after its own";;
+	*) assert_eq "$_tuish_buf" "page...child...child" \
+		"frame: the children's output is spliced into the host's buffer, after its own";;
+esac
+tuish_end
+assert_eq "$_writes" "1" "frame: the host's flush is the ONE write for page + children"
+
+# Unbuffered (a child repainting on its own tick), the child still writes for itself.
+_writes=0
+tuish_ctx_render "$_w1"
+assert_eq "$_writes" "1" "frame: with no host frame open, a child render writes on its own"
+
 test_summary
