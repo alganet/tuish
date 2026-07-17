@@ -81,6 +81,7 @@ is optional -- pick what you need:
 | `str.sh`      | String operations, Unicode display width        |
 | `buf.sh`      | Indexed line buffer                             |
 | `keybind.sh`  | Declarative event-to-action dispatch            |
+| `clip.sh`     | System clipboard (OSC 52)                       |
 | `draw.sh`     | Box drawing with styles and junctions           |
 
 ## Examples
@@ -113,6 +114,7 @@ editor, and what the website does with all of them.
 - [String Utilities (str.sh)](docs/str.md) -- Unicode width, substrings
 - [Line Buffer (buf.sh)](docs/buf.md) -- indexed line storage
 - [Key Bindings (keybind.sh)](docs/keybind.md) -- declarative event dispatch
+- [System Clipboard (clip.sh)](docs/clip.md) -- OSC 52 copy, and how paste works
 - [Shell Compatibility](docs/compatibility.md) -- supported shells, limits, workarounds
 
 ## License

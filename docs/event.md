@@ -86,6 +86,7 @@ Set before each event dispatch:
 |---------------------|--------------------------------------------------------------------|
 | `TUISH_EVENT`       | Parsed event name (e.g. `ctrl-w`, `up`, `char x`, `lclik`, `idle`) |
 | `TUISH_EVENT_KIND`  | Event category: `key`, `mouse`, `focus`, `paste`, `signal`, `idle` |
+| `TUISH_PASTE`       | The pasted text, on a `paste` event (see [hid.md](hid.md#paste-events-kind-paste)) |
 | `TUISH_MOUSE_X`     | Mouse column (1-based, viewport/region-relative when viewport active) |
 | `TUISH_MOUSE_Y`     | Mouse row (1-based, viewport/region-relative when viewport active)   |
 | `TUISH_MOUSE_ABS_Y` | Mouse row (1-based, absolute terminal row)                         |

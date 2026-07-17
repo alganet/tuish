@@ -147,6 +147,7 @@ No child runs a loop of its own, so every child stays live at once.
 | `tuish_ctx_mount R C W H FN...` | Create a region, run the child's (non-blocking) `FN` setup in it, leave the host active |
 | `tuish_ctx_dispatch CTX`        | Drive a child with the currently decoded event (keys, mouse, resize) |
 | `tuish_ctx_tick CTX`            | Drive a child with an **idle** tick, at *its own* rate (see below) |
+| `tuish_ctx_render CTX`          | Repaint a child now (call it after moving one — see [Scrolling a live child](#scrolling-a-live-child)) |
 | `tuish_ctx_sync_interval CTX...`| Adopt the fastest tick among the host and the listed children   |
 | `tuish_ctx_unmount CTX`         | Fold a child's viewport and drop its context                    |
 
@@ -190,6 +191,58 @@ browser tab), so a host cannot reliably know or intercept it.
 
 It is worth giving the host its own escape hatch too -- `web/site/site.sh` binds
 Esc to close whatever example is mounted.
+
+### Scrolling a live child
+
+A child does not have to fit in the pane it is shown through. A region is **three
+independent things**, and keeping them apart is what lets a running app scroll under
+an edge like any other content:
+
+| | |
+|---|---|
+| **layout size** (`TUISH_VIEW_ROWS`/`COLS`) | how big the child *thinks* it is. It lays out to fill this, so it must not shrink just because part of it is off-screen — or the child reflows instead of sliding. |
+| **origin** (`TUISH_VIEW_TOP`/`LEFT`) | where its logical `(1,1)` lands. May be **outside** the visible pane — even above row 1. That *is* a child scrolled partly out of view. |
+| **visible clip** | what may actually reach the terminal. `tuish_vmove` drops any cell outside it. |
+
+So pass `tuish_ctx_reseat` a rectangle whose top is above the pane, plus the pane
+itself as the clip window:
+
+```sh
+tuish_ctx_reseat "$_ctx"  $(( _pane_r + _line - _scroll ))  "$_pane_c" "$_w" "$_h" \
+                          "$_pane_r" "$_pane_c" "$_pane_w" "$_pane_h"
+tuish_ctx_render "$_ctx"     # repaint it where it now is
+```
+
+The child is **occluded, not resized**. It never learns it is clipped.
+
+`tuish_ctx_render` matters here: a child repaints on its own idle tick, and at a lazy
+interval that leaves a visibly torn widget on screen for a whole tick while the user
+scrolls. Repaint it yourself, right after you move it.
+
+**Clip a child from its FIRST paint.** `tuish_ctx_mount` does not merely create a
+context — it runs the child's setup *and paints it*. A child mounted while already
+partly outside the pane would draw over the host's chrome once, before any reseat
+could bound it. Set `TUISH_MOUNT_CLIP` (`"R C W H"`, the host's logical coords) and
+`tuish_ctx_mount` applies it before the child's first paint:
+
+```sh
+TUISH_MOUNT_CLIP="$_pane_r $_pane_c $_pane_w $_pane_h"
+tuish_ctx_mount "$_r" "$_c" "$_w" "$_h" _app_setup
+```
+
+**Clipping only holds for drawing that goes through the transform**, which is
+everything except the raw escapes. Two rules for an app that may be clipped:
+
+- **Honour `tuish_vmove`'s return value.** It *refuses* a clipped cell. Printing
+  anyway drops the text at whatever cell the cursor last sat on — standalone that
+  almost never bites (a cell is refused only off-screen), but in a clipped region it
+  fires constantly and smears stray text across the host's chrome. Use
+  `if tuish_vmove R C; then …; fi`, or the primitives that already do
+  (`tuish_text`, `tuish_put_at`, `_tuish_write_at`, the `draw.sh` calls).
+  A bounds test is *not* a substitute — `TUISH_VIEW_ROWS` is the layout height, which
+  stays full-size while the visible clip shrinks. Only `tuish_vmove` knows.
+- Keep off `tuish_clear_screen` / `clear_line` / `clear_to_eol` / `clear_to_bol` and
+  `tuish_move`, which address the physical terminal. See [term.md](term.md).
 
 ### Idle-tick negotiation
 
