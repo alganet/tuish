@@ -26,10 +26,33 @@ _tuish_event_loaded=1
 
 _tuish_redraw_requested=0
 _tuish_redraw_level=0
-_tuish_raf_inhibit=0
 
 # The redraw scheduler is per-context (a nested child renders on its own clock).
-tuish_ctx_register _tuish_redraw_requested _tuish_redraw_level _tuish_raf_inhibit
+tuish_ctx_register _tuish_redraw_requested _tuish_redraw_level
+
+# ─── The rAF peek inhibit ────────────────────────────────────────
+# "Do not peek at the input right now: the next sequence's ESC byte has already been
+# read, so a peek would eat its body."
+#
+# DEVICE-global, and that is a correctness requirement, not a preference — there is one
+# input stream, one _tuish_pending_byte (tui.sh), and one reader. It says nothing about
+# any context.
+#
+# It was a context register, and the bug that hides there is worth naming, because it
+# looks so much like the thing that is right everywhere else in this file. tuish_run sets
+# the flag in ITS context, then dispatches; a cooperative host routes that event onward
+# with tuish_ctx_dispatch, which activates the child — and the child's saved frame carries
+# its OWN copy of the flag, which is 0. The child then requests a redraw, reaches the rAF
+# check, sees no inhibit, and peeks. That peek stashes a byte in _tuish_pending_byte while
+# tuish_run's escape loop is reading the tty DIRECTLY, so the sequence body it was in the
+# middle of assembling loses a byte to a replay queue the loop will not drain until later.
+# Bytes come out reordered: exactly the failure the flag exists to prevent, entered through
+# the front door, and only when a host is driving a child — the one case the escape-burst
+# tests do not cover.
+#
+# Same reasoning as TUISH_HANDLED below: state that describes the DEVICE, or the single
+# event in flight, must not be marshalled per context.
+_tuish_raf_inhibit=0
 
 tuish_request_redraw ()
 {

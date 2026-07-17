@@ -333,4 +333,34 @@ case "$_captured" in
 esac
 assert_eq "$_r" "yes" "a discarded frame forgets what the device was told it had"
 
+# --- The peek inhibit belongs to the DEVICE, not to a context -------------------
+# There is one input stream, so "do not peek right now" cannot be per-context. It was,
+# and the failure needs a host to show itself: tuish_run raises the flag in ITS context
+# mid-sequence, then a cooperative host routes the event on with tuish_ctx_dispatch,
+# which activates the child — and the child's saved frame carries its own copy, 0. The
+# child peeks, stashes a byte in _tuish_pending_byte, and the escape loop reading the tty
+# directly never sees it again in order.
+#
+# Drive the marshalling itself: a switch is the whole mechanism, so if the flag survives
+# one, it survives every path built on one.
+reset_state
+tuish_ctx_create; _rt_ctx=$TUISH_CTX          # a root to switch away from and back to
+tuish_ctx_activate "$_rt_ctx"
+tuish_ctx_create; _ch_ctx=$TUISH_CTX
+
+_tuish_raf_inhibit=1
+tuish_ctx_activate "$_ch_ctx"
+assert_eq "$_tuish_raf_inhibit" "1" "inhibit: survives activating a child — it is the device's"
+_tuish_raf_inhibit=0
+tuish_ctx_activate "$_rt_ctx"
+assert_eq "$_tuish_raf_inhibit" "0" "inhibit: a child clearing it is not undone by switching back"
+
+# ...whereas the redraw REQUEST is per-context and must keep swapping: a child's pending
+# frame is not its host's. The two live one line apart in event.sh, so pin the difference.
+_tuish_redraw_requested=0
+tuish_ctx_activate "$_ch_ctx"
+_tuish_redraw_requested=1
+tuish_ctx_activate "$_rt_ctx"
+assert_eq "$_tuish_redraw_requested" "0" "request: stays per-context — a child's pending frame is its own"
+
 test_summary
