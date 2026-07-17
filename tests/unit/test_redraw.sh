@@ -44,6 +44,7 @@ reset_state () {
 	_tuish_redraw_requested=0
 	_tuish_redraw_level=0
 	_tuish_raf_inhibit=0
+	_tuish_raf_defers=0
 	_tuish_pending_byte=''
 	_event_log=''
 	_redraw_count=0
@@ -333,6 +334,79 @@ case "$_captured" in
 esac
 assert_eq "$_r" "yes" "a discarded frame forgets what the device was told it had"
 
+# --- An idle NEVER defers -------------------------------------------------------
+# Idle means _tuish_idle_wait let a whole interval pass with nothing arriving. A byte that
+# lands while the handler runs does not undo that wait, so the frame is owed. Before this,
+# a game whose tick and autorepeat were close enough to race would drop frames on exactly
+# the ticks it had already paid full price for.
+reset_state
+_tuish_pending_byte='x'
+tuish_on_event () { tuish_request_redraw 2; }
+tuish_on_redraw () { _redraw_count=$((_redraw_count + 1)); _redraw_level="$1"; }
+_tuish_parse_event "F"
+assert_eq "$_redraw_count" "1" "idle: renders even with a byte already pending"
+assert_eq "$_tuish_pending_byte" "x" "idle: renders WITHOUT peeking — the pending byte is untouched"
+assert_eq "$_tuish_redraw_requested" "0" "idle: request cleared"
+
+# The same byte on a KEY event still defers: only idle is special.
+reset_state
+_tuish_pending_byte='x'
+_tuish_parse_event "C a"
+assert_eq "$_redraw_count" "0" "key: still defers while input is pending"
+
+# An idle also flushes a frame that a burst has been holding, and clears the budget with it.
+reset_state
+_tuish_raf_defers=5
+_tuish_pending_byte='x'
+_tuish_parse_event "F"
+assert_eq "$_redraw_count" "1" "idle: flushes a frame the burst was holding"
+assert_eq "$_tuish_raf_defers" "0" "idle: the render resets the budget"
+
+# --- The deferral is BOUNDED ----------------------------------------------------
+# "Input pending" is a -t0 peek: it means we are behind, not that a burst is coming. Held
+# with no bound that is a livelock — a frame slower than autorepeat lets bytes queue faster
+# than they drain, the peek never comes back empty, and the screen is withheld until the key
+# is released. Spend a budget instead: hold at most TUISH_DEFER_MAX events, then paint.
+reset_state
+TUISH_DEFER_MAX=3
+_tuish_pending_byte='x'
+tuish_on_event () { tuish_request_redraw 2; }
+tuish_on_redraw () { _redraw_count=$((_redraw_count + 1)); _redraw_level="$1"; }
+_tuish_parse_event "C a"
+assert_eq "$_redraw_count" "0" "budget: 1st deferred"
+_tuish_parse_event "C a"
+_tuish_parse_event "C a"
+assert_eq "$_redraw_count" "0" "budget: held for the whole budget, not one event less"
+assert_eq "$_tuish_raf_defers" "3" "budget: counted"
+_tuish_parse_event "C a"
+assert_eq "$_redraw_count" "1" "budget: spent — renders despite input still pending"
+assert_eq "$_tuish_raf_defers" "0" "budget: reset by the render"
+assert_eq "$_tuish_redraw_requested" "0" "budget: request cleared by the forced render"
+assert_eq "$_tuish_pending_byte" "x" "budget: the forced render does not eat the pending byte"
+
+# The budget outranks the inhibit, and that is deliberate: inhibit stops the PEEK from
+# eating a sequence body, and rendering never peeks — it writes. A half-read escape
+# sequence must not be able to freeze the screen either.
+reset_state
+TUISH_DEFER_MAX=2
+_tuish_raf_inhibit=1
+_tuish_parse_event "C a"
+_tuish_parse_event "C a"
+assert_eq "$_redraw_count" "0" "budget+inhibit: held while the budget lasts"
+_tuish_parse_event "C a"
+assert_eq "$_redraw_count" "1" "budget+inhibit: a half-read sequence cannot freeze the screen forever"
+unset TUISH_DEFER_MAX
+
+# Cancelling ends the wait, so the next frame starts its budget fresh; re-requesting a
+# still-pending frame does NOT, because that is precisely what is being counted.
+reset_state
+tuish_on_event () { tuish_request_redraw 2; }
+_tuish_pending_byte='x'
+_tuish_parse_event "C a"
+assert_eq "$_tuish_raf_defers" "1" "budget: a re-request does not reset the count"
+tuish_cancel_redraw
+assert_eq "$_tuish_raf_defers" "0" "budget: cancel resets the count"
+
 # --- The peek inhibit belongs to the DEVICE, not to a context -------------------
 # There is one input stream, so "do not peek right now" cannot be per-context. It was,
 # and the failure needs a host to show itself: tuish_run raises the flag in ITS context
@@ -362,5 +436,14 @@ tuish_ctx_activate "$_ch_ctx"
 _tuish_redraw_requested=1
 tuish_ctx_activate "$_rt_ctx"
 assert_eq "$_tuish_redraw_requested" "0" "request: stays per-context — a child's pending frame is its own"
+
+# The defer budget goes with the request, for the same reason and one that is easier to get
+# wrong: it measures how long THIS context's frame has been owed. Device-global, a host
+# driving four children would spend one budget across all four and paint none of them.
+_tuish_raf_defers=0
+tuish_ctx_activate "$_ch_ctx"
+_tuish_raf_defers=6
+tuish_ctx_activate "$_rt_ctx"
+assert_eq "$_tuish_raf_defers" "0" "budget: per-context — one child's backlog is not another's"
 
 test_summary
