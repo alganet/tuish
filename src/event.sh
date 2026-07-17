@@ -118,6 +118,10 @@ _tuish_parse_event ()
 	case "$_class" in
 		S) TUISH_EVENT_KIND='signal'; TUISH_EVENT="${2}";;
 		F) TUISH_EVENT_KIND='idle'; TUISH_EVENT='idle';;
+		# The pasted TEXT is NOT in the descriptor — it would not survive `set --`
+		# word splitting, and a paste can contain anything. It lives in TUISH_PASTE,
+		# which _tuish_capture_paste filled before emitting this.
+		P) TUISH_EVENT_KIND='paste'; TUISH_EVENT='paste';;
 		*) _tuish_resolve_event "$@";;
 	esac
 
@@ -279,6 +283,92 @@ _tuish_esc_emit ()
 		''|91*|' 79'*) _tuish_parse_event "E ${1}";;
 		*) _tuish_parse_event "E 27${1}";;
 	esac
+}
+
+# ─── Bracketed paste capture ─────────────────────────────────────
+# The body of a paste (everything between ESC[200~ and ESC[201~) is TEXT, not input.
+# Without this it fell through to the ordinary key decoder, so a paste arrived as a
+# burst of individual key events: a pasted newline fired the app's `enter` BINDING, a
+# tab its `tab` binding, and every character forced a separate render+flush. Capture
+# the body here instead and hand the app one atomic `paste` event with the text in
+# TUISH_PASTE.
+#
+# TUISH_PASTE is DEVICE-global, deliberately NOT a context field: it belongs to the
+# event in flight, and registering it would make tuish_ctx_activate swap it out from
+# under a cooperative host dispatching the paste into a child.
+TUISH_PASTE=''
+TUISH_PASTE_MAX=${TUISH_PASTE_MAX:-262144}
+
+# Read bytes until the ESC[201~ terminator, accumulating the body into TUISH_PASTE.
+# Byte-oriented and ord-free on the hot path: we compare raw bytes, so multi-byte
+# UTF-8 passes through untouched (the key decoder only understands a few lead bytes).
+# A partial terminator that turns out not to be one (an ESC inside the pasted text) is
+# flushed back into the body via _hold, so nothing is lost. Reads are esc-timeout
+# bounded, so a truncated paste cannot hang the loop.
+_tuish_capture_paste ()
+{
+	TUISH_PASTE=''
+	local _st=0 _hold='' _n=0 _cr=0
+	while _tuish_get_byte "$_tuish_esc_timeout"
+	do
+		# Terminator FSM: ESC [ 2 0 1 ~
+		case "$_st" in
+			0) if test "$_tuish_byte" = "$_tuish_chr_27"
+			   then _st=1; _hold="$_tuish_byte"; continue; fi ;;
+			1) if test "$_tuish_byte" = '['
+			   then _st=2; _hold="${_hold}["; continue
+			   fi; _st=0 ;;
+			2) if test "$_tuish_byte" = '2'
+			   then _st=3; _hold="${_hold}2"; continue
+			   fi; _st=0 ;;
+			3) if test "$_tuish_byte" = '0'
+			   then _st=4; _hold="${_hold}0"; continue
+			   fi; _st=0 ;;
+			4) if test "$_tuish_byte" = '1'
+			   then _st=5; _hold="${_hold}1"; continue
+			   fi; _st=0 ;;
+			5) test "$_tuish_byte" = '~' && return 0      # terminator: done
+			   _st=0 ;;
+		esac
+
+		# Not (or no longer) a terminator: flush any held partial, then this byte.
+		if test -n "$_hold"
+		then TUISH_PASTE="${TUISH_PASTE}${_hold}"; _hold=''
+		fi
+
+		# Newlines: terminals send CR (or CRLF) for a line break inside a paste.
+		# Normalize to LF so the body is an ordinary multi-line string.
+		if test "$_tuish_byte" = "$_tuish_chr_13"
+		then TUISH_PASTE="${TUISH_PASTE}${_tuish_chr_10}"; _cr=1
+		elif test "$_tuish_byte" = "$_tuish_chr_10"
+		then test "$_cr" -eq 1 || TUISH_PASTE="${TUISH_PASTE}${_tuish_chr_10}"; _cr=0
+		else TUISH_PASTE="${TUISH_PASTE}${_tuish_byte}"; _cr=0
+		fi
+
+		# Bound the body: a runaway paste must truncate, not eat memory. Shell string
+		# append is O(n), so a very large paste is slow regardless — the cap keeps a
+		# pathological one survivable.
+		_n=$(( _n + 1 ))
+		if test "$_n" -ge "$TUISH_PASTE_MAX"
+		then
+			while _tuish_get_byte "$_tuish_esc_timeout"       # drain to the terminator
+			do
+				test "$_tuish_byte" = '~' && test "$_st" -eq 5 && break
+				case "$_tuish_byte" in
+					"$_tuish_chr_27") _st=1;;
+					'[') test "$_st" -eq 1 && _st=2 || _st=0;;
+					'2') test "$_st" -eq 2 && _st=3 || _st=0;;
+					'0') test "$_st" -eq 3 && _st=4 || _st=0;;
+					'1') test "$_st" -eq 4 && _st=5 || _st=0;;
+					*) _st=0;;
+				esac
+			done
+			return 0
+		fi
+	done
+	# Timed out with no terminator: keep whatever body we got.
+	test -n "$_hold" && TUISH_PASTE="${TUISH_PASTE}${_hold}"
+	return 0
 }
 
 tuish_run ()
@@ -453,6 +543,20 @@ tuish_run ()
 				if test "$_tuish_code" -ge 64 && test "$_tuish_code" -le 126
 				then
 					case "${_esc}" in
+						# ESC[200~ — a bracketed paste opens. Capture the BODY here,
+						# before emitting anything: the pasted bytes are text, not
+						# keystrokes, and _tuish_parse_event's rAF input-peek would
+						# otherwise eat them mid-render. paste-start / paste-end still
+						# bracket it for apps that track the boundaries; the atomic
+						# `paste` event in between carries the text in TUISH_PASTE.
+						'91 50 48 48 126')
+							_tuish_capture_paste
+							_tuish_raf_inhibit=1
+							_tuish_parse_event "E 91 50 48 48 126"
+							_tuish_raf_inhibit=0
+							_tuish_parse_event "P"
+							_tuish_parse_event "E 91 50 48 49 126"
+							continue 2;;
 						91*|' 79'*) _tuish_parse_event "E ${_esc}"; continue 2;;
 					esac
 				fi

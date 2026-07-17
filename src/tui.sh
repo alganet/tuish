@@ -379,6 +379,61 @@ tuish_ctx_create ()
 	return 0
 }
 
+# Seat the ACTIVE context into the absolute rectangle (abs_row, abs_col, W, H) — the
+# one place that knows which fields a region is made of. Shared by
+# tuish_ctx_create_region (first seating) and tuish_ctx_reseat (re-seating) so the
+# field list is never duplicated; hosts used to hand-copy this block.
+#
+# A region is THREE independent things, and keeping them apart is what lets a host
+# scroll a live child under the edge of a pane:
+#
+#   layout size  TUISH_VIEW_ROWS/COLS  — how big the child THINKS it is. The child
+#                                        lays out to fill this, so it must not change
+#                                        just because part of the child is off-screen,
+#                                        or the child reflows instead of sliding.
+#   origin       TUISH_VIEW_TOP/LEFT   — where the child's logical (1,1) lands. May be
+#                                        OUTSIDE the visible pane (even above row 1):
+#                                        that is a child scrolled partly out of view.
+#   visible clip _tuish_base_l*        — what may actually reach the terminal. Cells
+#                                        outside it are dropped by tuish_vmove.
+#
+# $5..$8 give the clip window in ABSOLUTE cells (row, 0-based col, W, H); omitted, it
+# is the region itself, which is the historical behaviour every existing caller gets.
+_tuish_ctx_seat ()   # $1=abs_row $2=abs_col0 $3=W $4=H [$5=clip_row $6=clip_col0 $7=clip_w $8=clip_h]
+{
+	TUISH_VIEW_TOP=$1
+	TUISH_VIEW_LEFT=$2
+	TUISH_VIEW_ROWS=$4
+	TUISH_VIEW_COLS=$3
+	_tuish_hosted=1
+	_tuish_rgn_top=$1
+	_tuish_rgn_left=$2
+	_tuish_rgn_rows=$4
+	_tuish_rgn_cols=$3
+
+	if test $# -ge 8
+	then
+		# Express the clip window in the CHILD's logical cells (the inverse of the
+		# tuish_vmove map: row = abs - VIEW_TOP + 1, col = abs - VIEW_LEFT), then
+		# intersect with the child's own extent. An empty intersection is fine — the
+		# child is entirely off-pane and simply draws nothing.
+		local _r0=$(( $5 - $1 + 1 ))          # first visible logical row
+		local _r1=$(( $5 + $8 - 1 - $1 + 1 )) # last  visible logical row
+		local _c0=$(( $6 + 1 - $2 ))          # first visible logical col
+		local _c1=$(( $6 + $7 - $2 ))         # last  visible logical col
+		test $_r0 -lt 1 && _r0=1
+		test $_c0 -lt 1 && _c0=1
+		test $_r1 -gt $4 && _r1=$4
+		test $_c1 -gt $3 && _c1=$3
+		_tuish_base_lrmin=$_r0; _tuish_base_lrmax=$_r1
+		_tuish_base_lcmin=$_c0; _tuish_base_lcmax=$_c1
+	else
+		_tuish_base_lrmin=1; _tuish_base_lrmax=$4
+		_tuish_base_lcmin=1; _tuish_base_lcmax=$3
+	fi
+	_tuish_tx_reset
+}
+
 # Create AND activate a child context bound to a region of the CURRENTLY ACTIVE
 # (parent) context: R C are the region's top-left in the parent's logical coords,
 # W H its size. The parent's live transform resolves the origin to absolute cells,
@@ -386,26 +441,6 @@ tuish_ctx_create ()
 # (1,1) is the region's top-left; its drawing clips to the region; a hosted
 # "fullscreen" fills the region. On return the id is in TUISH_CTX; the caller runs
 # the child, then tuish_ctx_activate <parent> + tuish_ctx_destroy <child>.
-# Seat the ACTIVE context into the absolute rectangle _abs_r,_abs_c,W,H: the one
-# place that knows which fields a region is made of. Shared by tuish_ctx_create_region
-# (first seating) and tuish_ctx_reseat (re-seating after a resize) so the field list
-# is never duplicated — hosts used to hand-copy this block to relayout their children.
-_tuish_ctx_seat ()   # $1=abs_row $2=abs_col $3=W $4=H
-{
-	TUISH_VIEW_TOP=$1
-	TUISH_VIEW_LEFT=$2
-	TUISH_VIEW_ROWS=$4
-	TUISH_VIEW_COLS=$3
-	_tuish_base_lrmin=1; _tuish_base_lrmax=$4
-	_tuish_base_lcmin=1; _tuish_base_lcmax=$3
-	_tuish_hosted=1
-	_tuish_rgn_top=$1
-	_tuish_rgn_left=$2
-	_tuish_rgn_rows=$4
-	_tuish_rgn_cols=$3
-	_tuish_tx_reset
-}
-
 tuish_ctx_create_region ()
 {
 	local _abs_r=$(( TUISH_VIEW_TOP + _tx_off_r + ($1 - 1) * _tx_ch ))
@@ -421,11 +456,28 @@ tuish_ctx_create_region ()
 # host calls this from its resize handler so the child relayouts into the moved
 # rectangle instead of stale geometry; the child then re-renders on the resize
 # event it is forwarded. The host stays active on return.
-tuish_ctx_reseat ()   # $1=ctx $2=R $3=C $4=W $5=H
+#
+# CR CC CW CH (optional, same coordinate frame) is the WINDOW the child may draw
+# through — "here is your rectangle, and here is the hole you are seen through".
+# Omitted, it is the region itself. This is what lets a host SCROLL a live child:
+# pass a region whose top is above the pane (R may be <= 0) and the pane as the clip
+# window, and the child slides under the pane's edge, clipped per cell. Its layout
+# size stays W x H throughout, so it never reflows — it is genuinely occluded, not
+# resized. See _tuish_ctx_seat.
+tuish_ctx_reseat ()   # $1=ctx $2=R $3=C $4=W $5=H [$6=CR $7=CC $8=CW $9=CH]
 {
 	local _abs_r=$(( TUISH_VIEW_TOP + _tx_off_r + ($2 - 1) * _tx_ch ))
 	local _abs_c=$(( TUISH_VIEW_LEFT + _tx_off_c + ($3 - 1) * _tx_cw ))
 	local _host=$_tuish_ctx_active
+	if test $# -ge 9
+	then
+		local _cab_r=$(( TUISH_VIEW_TOP + _tx_off_r + ($6 - 1) * _tx_ch ))
+		local _cab_c=$(( TUISH_VIEW_LEFT + _tx_off_c + ($7 - 1) * _tx_cw ))
+		tuish_ctx_activate "$1"
+		_tuish_ctx_seat "$_abs_r" "$_abs_c" "$4" "$5" "$_cab_r" "$_cab_c" "$8" "$9"
+		tuish_ctx_activate "$_host"
+		return 0
+	fi
 	tuish_ctx_activate "$1"
 	_tuish_ctx_seat "$_abs_r" "$_abs_c" "$4" "$5"
 	tuish_ctx_activate "$_host"

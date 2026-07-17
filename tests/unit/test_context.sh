@@ -25,6 +25,7 @@ TESTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 . "$TESTS_DIR/../src/event.sh"
 . "$TESTS_DIR/../src/hid.sh"
 . "$TESTS_DIR/../src/viewport.sh"
+. "$TESTS_DIR/../src/canvas.sh"
 . "$TESTS_DIR/../src/str.sh"
 . "$TESTS_DIR/../src/keybind.sh"
 
@@ -88,6 +89,54 @@ tuish_clear_to_edge 1 5
 _spaces8='        '                        # 12 - 5 + 1 = 8
 assert_eq "$_tuish_buf" "\\033[8;44H${_spaces8}" \
 	"clear_to_edge: honours a start column, still bounded by the region"
+_tuish_buffering=0; _tuish_buf=''
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+
+# --- Clipped seating: a child scrolled under a pane edge ---------------------
+# A live widget in a scrolling document must slide under the pane's edge. That works
+# by keeping the child's LAYOUT SIZE while moving its ORIGIN off-pane and narrowing
+# its VISIBLE CLIP — three things _tuish_ctx_seat keeps apart. The child must not
+# reflow (it still thinks it is full size); it must simply be occluded.
+#
+# Pane: host rows 10..19 (10 tall). Widget: 8 rows tall, scrolled up by 3, so its
+# virtual top is host row 7 and only its logical rows 4..8 are inside the pane.
+tuish_ctx_create_region 1 1 20 8
+_clip=$TUISH_CTX
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+tuish_ctx_reseat "$_clip" 7 5 20 8   10 5 20 10
+
+tuish_ctx_activate "$_clip"
+assert_eq "$TUISH_VIEW_ROWS" "8" "clipped: layout height is UNCHANGED (the child does not reflow)"
+assert_eq "$TUISH_VIEW_COLS" "20" "clipped: layout width is unchanged"
+assert_eq "$TUISH_VIEW_TOP"  "7" "clipped: origin sits ABOVE the pane (row 7 < pane top 10)"
+assert_eq "$_tuish_base_lrmin" "4" "clipped: first visible logical row is 4 (rows 1-3 scrolled out)"
+assert_eq "$_tuish_base_lrmax" "8" "clipped: last visible logical row is 8 (the widget's own extent)"
+
+# Rows 1-3 are scrolled out: tuish_vmove must REFUSE them (nothing reaches the host).
+_tuish_buffering=1; _tuish_buf=''
+tuish_vmove 1 1 && _bad=yes || _bad=no
+assert_eq "$_bad" "no" "clipped: a scrolled-out row is refused by tuish_vmove"
+assert_eq "$_tuish_buf" "" "clipped: a scrolled-out row emits NO bytes (host chrome is safe)"
+
+# Row 4 is the first visible one, and it must land on the pane's top row (host 10).
+_tuish_buf=''
+tuish_vmove 4 1 && _ok=yes || _ok=no
+assert_eq "$_ok" "yes" "clipped: the first visible row is accepted"
+assert_eq "$_tuish_buf" '\033[10;5H' "clipped: it maps to the pane's top row, not the widget's"
+
+# --- A canvas inside a clipped child cannot escape it (regression) ------------
+# tuish_vmove clips a LOGICAL coordinate and only then maps it to an absolute cell —
+# it never re-checks the result against the base clip. So a canvas that overwrote the
+# clip (as it used to) could address cells outside its host's region entirely, and a
+# partly-scrolled child would leak its hidden rows over the host's chrome.
+tuish_canvas 1 1 20 8              # a canvas spanning the child's whole extent
+assert_eq "$_tx_lrmin" "4" "canvas: clip is INTERSECTED with the base, not overwritten"
+assert_eq "$_tx_lrmax" "8" "canvas: canvas extent still bounds the bottom"
+_tuish_buf=''
+tuish_vmove 1 1 && _bad=yes || _bad=no
+assert_eq "$_bad" "no"     "canvas: a canvas cell in a scrolled-out row is still refused"
+assert_eq "$_tuish_buf" "" "canvas: it emits no bytes — the canvas cannot escape the region"
+tuish_canvas_off
 _tuish_buffering=0; _tuish_buf=''
 tuish_ctx_activate "$TUISH_CTX_ROOT"
 
