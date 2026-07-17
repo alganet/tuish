@@ -532,6 +532,12 @@ tuish_ctx_destroy ()
 # tuish_ctx_dispatch and calls tuish_ctx_unmount when set.
 TUISH_CTX_QUIT=0
 
+# Did the child ACT on the event we just handed it? Copied out of TUISH_HANDLED
+# (event.sh) by _tuish_ctx_drive. A host uses it to CHAIN an event the child
+# declined: the wheel over an inline widget that has nothing left to scroll should
+# scroll the page, not vanish into the widget.
+TUISH_CTX_HANDLED=0
+
 # Feed raw descriptor $1 to the ALREADY-ACTIVE child and record whether it quit.
 # The shared core of tuish_ctx_dispatch and tuish_ctx_tick.
 #
@@ -546,6 +552,7 @@ _tuish_ctx_drive ()
 	_tuish_driven=1
 	_tuish_parse_event "$1"
 	_tuish_driven=0
+	TUISH_CTX_HANDLED=${TUISH_HANDLED:-0}
 	# Surface a child-initiated quit to the host. The child is still active here, so
 	# _tuish_quit is its value (its own quit binding set it to 'yes'); once we restore
 	# the host it lives in the child's saved frame. The host reads TUISH_CTX_QUIT.
