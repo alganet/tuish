@@ -32,12 +32,24 @@ compat.sh sets `LC_ALL=C` and `LC_CTYPE=C` at source time for consistent byte ha
 
 ## Timeout Resolution
 
-| Resolution               | Shells                 | Idle Timeout                                  |
-|--------------------------|------------------------|-----------------------------------------------|
-| `sub` (subsecond)        | bash, zsh, ksh93, mksh | 0.26s (configurable via `TUISH_IDLE_TIMEOUT`) |
-| `second` (whole seconds) | busybox sh             | 1s minimum                                    |
+| Resolution               | Shells                            | Idle Timeout                                  |
+|--------------------------|-----------------------------------|-----------------------------------------------|
+| `sub` (subsecond)        | bash, zsh, ksh93, mksh, busybox sh | 0.26s (configurable via `TUISH_IDLE_TIMEOUT`) |
+| `second` (whole seconds) | a shell whose `read -t` rejects a fraction | 1s minimum                           |
+
+This is **probed, not assumed** (`_tuish_init_timing`): tui.sh runs `read -t0.01` and believes
+the answer. A launcher can declare `TUISH_TIMING=sub|second` to skip the probe's two forks.
+
+> **busybox is `sub`, not `second`.** This table used to say otherwise, and it sent a real
+> investigation looking for a 1s idle timeout that was never there. busybox `ash` reads
+> fractional timeouts whenever it is built with `FEATURE_SH_READ_FRAC`, which is usual — the
+> wasm build the website runs sets it, and probes `sub`. Trust `TUISH_TIMING`, not a table.
 
 Check `TUISH_TIMING` after `tuish_init` to know which is active.
+
+An idle tick is that `read` **timing out**, which is worth knowing before choosing an
+interval: an app whose interval is longer than the terminal's key-autorepeat interval gets no
+idle at all while a key is held. See [tui.md](tui.md#an-idle-tick-is-a-timeout-not-a-timer).
 
 ## Shell-Specific Notes
 
