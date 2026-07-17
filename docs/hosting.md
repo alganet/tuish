@@ -185,18 +185,31 @@ _on_event ()
 
 | Function                                   | Purpose                                                     |
 |--------------------------------------------|-------------------------------------------------------------|
-| `tuish_host_pane R C W H`                  | The window children are seen through; they clip to it        |
+| `tuish_host_pane [R C W H]`                | The window children are seen through; they clip to it (no args: no pane) |
 | `tuish_host_begin`                         | Start (re)declaring the child list                          |
 | `tuish_host_slot ID FN [ARG] R C W H [modal]` | One child, and where it goes                             |
 | `tuish_host_commit`                        | Reconcile: mount, reseat, unmount, adopt the fastest tick    |
 | `tuish_host_paint`                         | Render live children into the host's open frame              |
 | `tuish_host_paint_focus`                   | Render only the focused child (cheap partial repaints)       |
+| `tuish_host_render ID`                     | Render only that child (you changed what it shows)           |
 | `tuish_host_route`                         | The standard router; returns 1 if nothing took the event     |
-| `tuish_host_focus [ID]`                    | Get / set the child holding the keyboard (`''` = the host)   |
+| `tuish_host_focus [ID]`                    | Give the keyboard to a child (no arg: take it back)          |
 | `tuish_host_at X Y`                        | Which child is under (x,y)? -> `TUISH_HOST_HIT`              |
 | `tuish_host_owns_row ROW`                  | Does a live child own that screen row?                       |
+| `tuish_host_row_free ROW C W`              | Which cells of it are still yours -> `TUISH_HOST_SEGS`       |
 | `tuish_host_ctx ID`                        | That child's context -> `TUISH_HOST_CTX`                     |
 | `tuish_host_drop ID` / `tuish_host_clear`  | Unmount one / all                                            |
+
+Answers come back in variables, never on stdout — asking a question must not cost a fork:
+
+| Variable            | Set by                | Holds                                             |
+|---------------------|-----------------------|---------------------------------------------------|
+| `TUISH_HOST_FOCUS`  | `tuish_host_focus`, and a click | The child holding the keyboard (`''` = the host) |
+| `TUISH_HOST_HIT`    | `tuish_host_at`       | The child under the pointer (`''` = none)          |
+| `TUISH_HOST_SEGS`   | `tuish_host_row_free` | The free runs of a row, as `C W C W ...`           |
+| `TUISH_HOST_CTX`    | `tuish_host_ctx`      | That child's context (`''` = not mounted)          |
+| `TUISH_HOST_DROVE`  | `tuish_host_route`    | The id it handed the event to                      |
+| `TUISH_HOST_QUIT`   | `tuish_host_route`    | The id of a child that ended itself                |
 
 Three things it gets right that a hand-rolled host usually does not:
 
@@ -214,6 +227,35 @@ policy instead of forking it. What a child quitting *means* is yours to decide; 
 not unmount it for you.
 
 `examples/cooperative.sh` is the whole thing in ~30 lines.
+
+### Painting around live children
+
+A host that draws its own content *around* its children — prose with widgets embedded in
+it, a scrolling document — must not paint the cells the children own, or it wipes a running
+app on every repaint. There are two questions, and they are not the same one.
+
+`tuish_host_owns_row ROW` is the cheap predicate: a line of text is either drawn or it is
+not, so a row is all the answer you need.
+
+`tuish_host_row_free ROW C W` is what you need before you **fill**, because filling happens
+cell by cell. A child narrower than the pane leaves columns beside it that are *yours*. Two
+children side by side leave a gap between them that is also yours. A host that skips the
+whole row paints neither — so whatever was there last frame simply stays, and the children
+end up standing in a puddle of stale text as the content scrolls underneath them. Ask what
+is free and fill exactly that:
+
+```sh
+if tuish_host_row_free "$_row" "$_c" "$_w"
+then
+	set -- $TUISH_HOST_SEGS          # "C W C W ..." — the runs no child covers
+	while test $# -ge 2
+	do tuish_draw_fill "$_row" "$1" "$2" 1 bg=$C_PANEL; shift 2; done
+fi
+```
+
+It returns 1 when the children cover the span outright, so a full-pane child costs you
+nothing. Both queries are clip-aware: a child scrolled under the pane's edge owns only what
+can actually be seen of it.
 
 ### The primitives underneath
 

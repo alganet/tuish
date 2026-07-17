@@ -179,7 +179,7 @@ tuish_host_focus ''
 TUISH_RAW='M 0 5 4'                            # a click inside alpha
 _tuish_parse_event "$TUISH_RAW"                # decode it in the host's frame
 tuish_host_route || :
-assert_eq "$(tuish_host_focus)" "alpha" "route: a click focuses the child under the pointer"
+assert_eq "$TUISH_HOST_FOCUS" "alpha" "route: a click focuses the child under the pointer"
 
 TUISH_RAW='M 65 5 4'                           # wheel down, over alpha
 _tuish_parse_event "$TUISH_RAW"
@@ -211,5 +211,90 @@ _tuish_parse_event "$TUISH_RAW"
 _a_can_scroll=0                                # it declines...
 if tuish_host_route; then _took=1; else _took=0; fi
 assert_eq "$_took" "1" "chain: ... but a MODAL child consumes the event anyway"
+
+# A modal child declared the way the DOCS said to declare it. The flag was documented as 1
+# and compared against the string 'modal', so the documented form quietly produced a child
+# that was not modal at all.
+tuish_host_begin
+tuish_host_slot solo _a_setup '' 3 2 40 10 1
+tuish_host_commit
+tuish_host_focus solo
+TUISH_RAW='M 65 5 4'
+_tuish_parse_event "$TUISH_RAW"
+_a_can_scroll=0
+if tuish_host_route; then _took=1; else _took=0; fi
+assert_eq "$_took" "1" "modal: the documented '1' spelling means modal, like the word does"
+
+# --- Painting around the children ---------------------------------------------
+# What a host actually needs to know before it paints a row is not "does a child own this
+# row" but "which CELLS of it are still mine". Two children side by side leave a GAP
+# between them, and that gap is the host's: a host told only the outer bounds of the
+# children never repaints it, and last frame's text stands there for good.
+tuish_host_pane 3 2 40 10
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 3 2  20 4    # cols 2..21
+tuish_host_slot beta  _b_setup '' 3 24 12 4    # cols 24..35
+tuish_host_commit
+
+tuish_host_row_free 3 2 40 && _free=$TUISH_HOST_SEGS || _free='(none)'
+assert_eq "$_free" "22 2 36 6" \
+	"free: the GAP between two children is the host's, and so is the tail past them"
+
+tuish_host_row_free 8 2 40 && _free=$TUISH_HOST_SEGS || _free='(none)'
+assert_eq "$_free" "2 40" "free: a row with no children on it is the host's outright"
+
+tuish_host_row_free 3 2 20 && _free=$TUISH_HOST_SEGS || _free='(none)'
+assert_eq "$_free" "(none)" \
+	"free: a span a child covers outright leaves nothing to paint (and says so)"
+
+# Clip-aware, like everything else here: a child scrolled above the pane owns nothing on
+# the rows it nominally covers, because it cannot be seen there.
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 1 2 20 4     # rows 1..4, pane starts at 3
+tuish_host_commit
+tuish_host_row_free 3 2 40 && _free=$TUISH_HOST_SEGS || _free='(none)'
+assert_eq "$_free" "22 20" "free: a half-clipped child still owns its visible half"
+
+# --- Focus is a variable, not a fork ------------------------------------------
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 3 2  20 4
+tuish_host_slot beta  _b_setup '' 3 24 12 4
+tuish_host_commit
+
+tuish_host_focus alpha
+assert_eq "$TUISH_HOST_FOCUS" "alpha" "focus: the id is readable as a plain variable"
+tuish_host_focus
+assert_eq "$TUISH_HOST_FOCUS" "" "focus: no argument means nobody — the host has it"
+
+# The caret path: a focused child that goes away must not leave the focus pointing at it.
+tuish_host_focus alpha
+tuish_host_begin
+tuish_host_slot beta _b_setup '' 3 24 12 4     # alpha is gone
+tuish_host_commit
+assert_eq "$TUISH_HOST_FOCUS" "" "focus: unmounting the focused child hands the keyboard back"
+
+# --- Repainting ONE child ------------------------------------------------------
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 3 2  20 4
+tuish_host_slot beta  _b_setup '' 3 24 12 4
+tuish_host_commit
+
+_paints=''
+tuish_begin; tuish_host_render beta; tuish_end
+assert_eq "$_paints" " b" "render: one child, by id — nobody else repaints"
+
+tuish_host_render nosuch && _r=0 || _r=1
+assert_eq "$_r" "1" "render: an id nobody has is a no-op, and says so"
+
+# --- The pane can be taken away ------------------------------------------------
+# No args means no pane, the way tuish_ctx_clip means it. It used to store three spaces,
+# which is not empty — so every later query parsed garbage out of it.
+tuish_host_pane
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 40 2 20 4    # far below where the pane used to be
+tuish_host_commit
+tuish_host_ctx alpha; _ctx_a=$TUISH_HOST_CTX
+assert_eq "$(test -n "$_ctx_a" && echo yes)" "yes" \
+	"pane: with no pane there is nothing to be off the edge of — the child stays"
 
 test_summary

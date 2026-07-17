@@ -4,6 +4,11 @@
 #
 # SPDX-License-Identifier: ISC
 
+# Load guard: skip re-definition if already sourced (see tui.sh). Without it a second
+# source would reset the child table out from under the children it is holding.
+if test -n "${_tuish_host_loaded:-}"; then return 0; fi
+_tuish_host_loaded=1
+
 # src/host.sh - Hosting several live children in one event loop.
 # Source after tui.sh and event.sh (and keybind.sh, if the host binds keys).
 #
@@ -13,17 +18,28 @@
 # wrote it independently (the website and examples/cooperative.sh) and only one of them got
 # it right.
 #
-#   tuish_host_pane R C W H         the window children are seen through (optional)
+#   tuish_host_pane [R C W H]       the window children are seen through (none: no clipping)
 #   tuish_host_begin                start (re)declaring the child list
 #   tuish_host_slot ID FN [ARG] R C W H [modal]
 #   tuish_host_commit               reconcile: mount / reseat / unmount, adopt the tick
 #
 #   tuish_host_paint                render live children into the host's OPEN frame
+#   tuish_host_paint_focus          ... or just the focused one (the caret; see below)
+#   tuish_host_render ID            ... or just that one
 #   tuish_host_route                the standard router; returns 1 if nothing took it
-#   tuish_host_focus [ID]           get / set the child holding the keyboard
+#   tuish_host_focus [ID]           give the keyboard to a child (no arg: take it back)
 #   tuish_host_at X Y               which child is under (x,y)? -> TUISH_HOST_HIT
 #   tuish_host_owns_row ROW         does a live child own that screen row?
+#   tuish_host_row_free ROW C W     which of it is still YOURS -> TUISH_HOST_SEGS
 #   tuish_host_ctx ID               that child's context id -> TUISH_HOST_CTX
+#   tuish_host_drop ID              unmount one child
+#   tuish_host_clear                unmount all of them (host teardown)
+#
+# Out-variables, read after the call that fills them:
+#   TUISH_HOST_FOCUS  the child holding the keyboard ('' = the host itself)
+#   TUISH_HOST_HIT    tuish_host_at         TUISH_HOST_CTX   tuish_host_ctx
+#   TUISH_HOST_SEGS   tuish_host_row_free   TUISH_HOST_DROVE the id route drove
+#   TUISH_HOST_QUIT   the id of a child that ended ITSELF
 #
 # The host still owns LAYOUT: it says where each child goes, every time. This module never
 # learns what a "scroll offset" or a "line of text" is — you hand it rectangles.
@@ -36,25 +52,48 @@
 #   modal 1 if it owns its region outright (see tuish_host_route)
 #   ctx   its context, once mounted ('' = not mounted)
 _th_n=0                 # live slots
-_th_focus=''            # id of the child holding the keyboard ('' = the host)
-_th_pane=''             # "R C W H", or '' for no pane
 _th_interval=''         # the host's own tick, to restore when the last child goes
+
+# The pane, in FIELDS. It is read on every hit test and every row query — parsing it out of
+# a string each time is work, and the two places that did the parsing drifted apart.
+_th_haspane=0
+_th_pr=0 _th_pc=0 _th_pw=0 _th_ph=0
 
 _th_decl_n=0            # slots declared since tuish_host_begin
 
 TUISH_HOST_HIT=''       # out: tuish_host_at
 TUISH_HOST_CTX=''       # out: tuish_host_ctx
+TUISH_HOST_SEGS=''      # out: tuish_host_row_free
 TUISH_HOST_DROVE=''     # out: the id tuish_host_route handed the event to
 TUISH_HOST_QUIT=''      # out: the id of a child that ended ITSELF
+
+# Who has the keyboard ('' = the host). A VARIABLE, because that is what it is — the same
+# kind of thing as TUISH_EVENT or TUISH_MOUSE_X, and read as often. It used to be a getter
+# that PRINTED its answer, which is the one thing a shell function cannot do without a
+# subshell: every host that wanted to know who was focused forked to ask, once per frame in
+# examples/cooperative.sh and once per idle tick in the website. In a toolkit whose whole
+# argument is that it does not fork, that was the fork.
+TUISH_HOST_FOCUS=''
 
 # ─── The pane ────────────────────────────────────────────────────
 # The window children are seen through. Children may be seated partly (or wholly) outside
 # it — that is a child scrolled under an edge, and it is CLIPPED, not resized. Without a
 # pane, children are simply not clipped.
-tuish_host_pane ()   # $1=R $2=C $3=W $4=H
+#
+# No arguments means NO PANE, the way tuish_ctx_clip means it. (It used to store the empty
+# rectangle as a string of spaces, which is not empty — so every later query happily parsed
+# blanks out of it and compared them as numbers.)
+tuish_host_pane ()   # [$1=R $2=C $3=W $4=H]
 {
-	_th_pane="$1 $2 $3 $4"
-	tuish_ctx_clip "$1" "$2" "$3" "$4"
+	if test $# -ge 4
+	then
+		_th_haspane=1
+		_th_pr=$1; _th_pc=$2; _th_pw=$3; _th_ph=$4
+		tuish_ctx_clip "$1" "$2" "$3" "$4"
+	else
+		_th_haspane=0
+		tuish_ctx_clip
+	fi
 	return 0
 }
 
@@ -72,13 +111,19 @@ tuish_host_pane ()   # $1=R $2=C $3=W $4=H
 # down and remounted (and repainted) sixty times a second.
 tuish_host_begin () { _th_decl_n=0; return 0; }
 
+# The MODAL flag is normalized here, to 0 or 1, and both spellings are taken: `modal`
+# because that is what a host writes and reads, `1` because that is what this file's own
+# comments told people to write — while the router compared it against the word, so the
+# documented spelling produced a child that was not modal at all.
 tuish_host_slot ()   # $1=ID $2=FN $3=ARG $4=R $5=C $6=W $7=H [$8=modal]
 {
+	local _m=0
+	case "${8:-}" in modal|1) _m=1;; esac
 	_th_decl_n=$(( _th_decl_n + 1 ))
 	eval "_th_d_id_$_th_decl_n=\$1  _th_d_fn_$_th_decl_n=\$2  _th_d_arg_$_th_decl_n=\$3
 	      _th_d_r_$_th_decl_n=\$4   _th_d_c_$_th_decl_n=\$5
 	      _th_d_w_$_th_decl_n=\$6   _th_d_h_$_th_decl_n=\$7
-	      _th_d_modal_$_th_decl_n=\${8:-}"
+	      _th_d_modal_$_th_decl_n=\$_m"
 	return 0
 }
 
@@ -156,7 +201,7 @@ tuish_host_commit ()
 		if test -n "$_ctx"
 		then
 			tuish_ctx_unmount "$_ctx"
-			test "$_th_focus" = "$_id" && _th_focus=''
+			test "$TUISH_HOST_FOCUS" = "$_id" && TUISH_HOST_FOCUS=''
 		fi
 		_j=$(( _j + 1 ))
 	done
@@ -168,15 +213,11 @@ tuish_host_commit ()
 # Wholly outside the pane? (No pane = never.)
 _th_offpane ()   # $1=R $2=C $3=W $4=H
 {
-	test -n "$_th_pane" || return 1
-	local _q="$_th_pane" _pr _pc _pw _ph
-	_pr="${_q%% *}"; _q="${_q#* }"
-	_pc="${_q%% *}"; _q="${_q#* }"
-	_pw="${_q%% *}"; _ph="${_q##* }"
-	test $(( $1 + $4 - 1 )) -lt "$_pr" && return 0
-	test "$1" -gt $(( _pr + _ph - 1 ))  && return 0
-	test $(( $2 + $3 - 1 )) -lt "$_pc" && return 0
-	test "$2" -gt $(( _pc + _pw - 1 ))  && return 0
+	test "$_th_haspane" -eq 1 || return 1
+	test $(( $1 + $4 - 1 )) -lt "$_th_pr" && return 0
+	test "$1" -gt $(( _th_pr + _th_ph - 1 ))  && return 0
+	test $(( $2 + $3 - 1 )) -lt "$_th_pc" && return 0
+	test "$2" -gt $(( _th_pc + _th_pw - 1 ))  && return 0
 	return 1
 }
 
@@ -187,7 +228,7 @@ _th_unmount ()   # $1 = slot index
 	test -n "$_c" || return 0
 	tuish_ctx_unmount "$_c"
 	eval "_th_ctx_$1=''"
-	test "$_th_focus" = "$_id" && _th_focus=''
+	test "$TUISH_HOST_FOCUS" = "$_id" && TUISH_HOST_FOCUS=''
 	return 0
 }
 
@@ -210,17 +251,55 @@ _th_adopt_interval ()
 }
 
 # ─── Lookups ─────────────────────────────────────────────────────
-tuish_host_ctx ()   # $1 = id -> TUISH_HOST_CTX ('' = not mounted / unknown)
+# Everything in here is one of two questions — WHICH SLOT is this id, and WHERE can that
+# slot be seen — so there is one answer to each, and every public query is a loop around it.
+# There used to be three copies of the second one, differing only in what they did with the
+# rectangle at the end; the mouse router asked the first one three times per click.
+
+# The slot index of id $1 -> _th_i (0 = unknown). A PREDICATE: call it in a condition.
+_th_i=0
+_th_find ()   # $1 = id
 {
 	local _i=1 _id
-	TUISH_HOST_CTX=''
+	_th_i=0
 	while test $_i -le $_th_n
 	do
 		eval "_id=\$_th_id_$_i"
-		if test "$_id" = "$1"
-		then eval "TUISH_HOST_CTX=\$_th_ctx_$_i"; return 0; fi
+		if test "$_id" = "$1"; then _th_i=$_i; return 0; fi
 		_i=$(( _i + 1 ))
 	done
+	return 1
+}
+
+# The VISIBLE rectangle of slot $1 — what it declared, clamped to the pane — in
+# _th_t/_th_b/_th_l/_th_r, absolute cells. A PREDICATE: 1 if the slot is not mounted, or if
+# nothing of it survives the clip. So "is any of this child on screen" and "where" are the
+# same question, asked once.
+_th_t=0 _th_b=0 _th_l=0 _th_r=0
+_th_rect ()   # $1 = slot index
+{
+	local _c _r _cc _w _h
+	eval "_c=\$_th_ctx_$1 _r=\$_th_r_$1 _cc=\$_th_c_$1 _w=\$_th_w_$1 _h=\$_th_h_$1"
+	test -n "$_c" || return 1
+	_th_t=$_r;  _th_b=$(( _r + _h - 1 ))
+	_th_l=$_cc; _th_r=$(( _cc + _w - 1 ))
+	if test "$_th_haspane" -eq 1
+	then
+		test "$_th_t" -lt "$_th_pr" && _th_t=$_th_pr
+		test "$_th_b" -gt $(( _th_pr + _th_ph - 1 )) && _th_b=$(( _th_pr + _th_ph - 1 ))
+		test "$_th_l" -lt "$_th_pc" && _th_l=$_th_pc
+		test "$_th_r" -gt $(( _th_pc + _th_pw - 1 )) && _th_r=$(( _th_pc + _th_pw - 1 ))
+	fi
+	test "$_th_t" -le "$_th_b" || return 1
+	test "$_th_l" -le "$_th_r" || return 1
+	return 0
+}
+
+tuish_host_ctx ()   # $1 = id -> TUISH_HOST_CTX ('' = not mounted / unknown)
+{
+	TUISH_HOST_CTX=''
+	_th_find "$1" || return 0
+	eval "TUISH_HOST_CTX=\$_th_ctx_$_th_i"
 	return 0
 }
 
@@ -230,69 +309,116 @@ tuish_host_ctx ()   # $1 = id -> TUISH_HOST_CTX ('' = not mounted / unknown)
 # though its rectangle nominally still covers those rows. You cannot click what you cannot
 # see, and a host that gets this wrong routes clicks to a widget hidden behind its own
 # chrome.
+# The hit's slot index is left in _th_i, so a router that wants the child's context and its
+# modal flag next does not scan the table again for each.
 tuish_host_at ()   # $1=x $2=y
 {
-	local _i=1 _c _r _cc _w _h _t _b _l _rr
+	local _i=1
 	TUISH_HOST_HIT=''
 	while test $_i -le $_th_n
 	do
-		eval "_c=\$_th_ctx_$_i _r=\$_th_r_$_i _cc=\$_th_c_$_i _w=\$_th_w_$_i _h=\$_th_h_$_i"
-		if test -n "$_c"
-		then
-			_t=$_r; _b=$(( _r + _h - 1 )); _l=$_cc; _rr=$(( _cc + _w - 1 ))
-			_th_clamp_to_pane
-			if test "$1" -ge "$_l" && test "$1" -le "$_rr" \
-			   && test "$2" -ge "$_t" && test "$2" -le "$_b"
-			then eval "TUISH_HOST_HIT=\$_th_id_$_i"; return 0; fi
-		fi
+		if _th_rect $_i \
+		   && test "$1" -ge "$_th_l" && test "$1" -le "$_th_r" \
+		   && test "$2" -ge "$_th_t" && test "$2" -le "$_th_b"
+		then eval "TUISH_HOST_HIT=\$_th_id_$_i"; _th_i=$_i; return 0; fi
 		_i=$(( _i + 1 ))
 	done
 	return 0
 }
 
-# Clamp _t/_b/_l/_rr to the pane (no pane: leave them).
-_th_clamp_to_pane ()
-{
-	test -n "$_th_pane" || return 0
-	local _q="$_th_pane" _pr _pc _pw _ph
-	_pr="${_q%% *}"; _q="${_q#* }"
-	_pc="${_q%% *}"; _q="${_q#* }"
-	_pw="${_q%% *}"; _ph="${_q##* }"
-	test "$_t" -lt "$_pr" && _t=$_pr
-	test "$_b" -gt $(( _pr + _ph - 1 )) && _b=$(( _pr + _ph - 1 ))
-	test "$_l" -lt "$_pc" && _l=$_pc
-	test "$_rr" -gt $(( _pc + _pw - 1 )) && _rr=$(( _pc + _pw - 1 ))
-	return 0
-}
+# ─── Painting around the children ────────────────────────────────
+# A host that draws its own content AROUND live children has to know which cells are not
+# its to touch: filling them would wipe a running app on every repaint. Two questions, and
+# they are not the same one.
+#
+# tuish_host_owns_row answers by ROW: enough to decide whether to draw a line of text, which
+# a host either draws or does not.
+#
+# tuish_host_row_free answers by CELL, and it is what you need before you FILL. A child
+# narrower than the pane leaves columns beside it that are the host's; two children leave a
+# gap between them that is also the host's — and a host that skips the whole row paints
+# neither, so whatever was there last frame just stays, and the children end up standing in
+# a puddle of stale text as the content scrolls underneath them. Asking for the children's
+# outer bounds cannot express that gap. Asking what is FREE can: the complement of a set of
+# rectangles is a set of rectangles.
 
-# Does a live child own screen row $1? A host that draws its own content AROUND its
-# children asks this before it paints a row — those rows belong to the child, and filling
-# them would wipe a running app on every repaint.
+# Does a live child own screen row $1? PREDICATE.
 tuish_host_owns_row ()   # $1 = absolute screen row
 {
-	local _i=1 _c _r _cc _w _h _t _b _l _rr
+	local _i=1
 	while test $_i -le $_th_n
 	do
-		eval "_c=\$_th_ctx_$_i _r=\$_th_r_$_i _cc=\$_th_c_$_i _w=\$_th_w_$_i _h=\$_th_h_$_i"
-		if test -n "$_c"
-		then
-			_t=$_r; _b=$(( _r + _h - 1 )); _l=$_cc; _rr=$(( _cc + _w - 1 ))
-			_th_clamp_to_pane
-			test "$1" -ge "$_t" && test "$1" -le "$_b" && return 0
-		fi
+		if _th_rect $_i && test "$1" -ge "$_th_t" && test "$1" -le "$_th_b"
+		then return 0; fi
 		_i=$(( _i + 1 ))
 	done
 	return 1
 }
 
+# Which parts of screen row $1, within the span [C .. C+W-1], are still the HOST'S to paint?
+# -> TUISH_HOST_SEGS, as "C W C W ..." — the caller's span minus every live child on the row.
+# PREDICATE: 0 if anything is left, 1 if the children cover the span outright (SEGS empty).
+#
+# C W pairs, not L R, because that is the shape of every rectangle in this toolkit: the
+# caller spends them straight on tuish_draw_fill without doing arithmetic on the way.
+tuish_host_row_free ()   # $1=ROW $2=C $3=W
+{
+	local _row=$1 _c0=$2 _c1=$(( $2 + $3 - 1 ))
+	local _i=1 _n=0 _cur=$2 _hit _next _l _r
+	TUISH_HOST_SEGS=''
+	test "$_c1" -ge "$_c0" || return 1
+
+	# The children ON this row, clipped to the pane and to the caller's span. Collected
+	# once: the sweep below walks them repeatedly.
+	while test $_i -le $_th_n
+	do
+		if _th_rect $_i && test "$_row" -ge "$_th_t" && test "$_row" -le "$_th_b"
+		then
+			_l=$_th_l; _r=$_th_r
+			test "$_l" -lt "$_c0" && _l=$_c0
+			test "$_r" -gt "$_c1" && _r=$_c1
+			if test "$_l" -le "$_r"
+			then _n=$(( _n + 1 )); eval "_th_iv_l_$_n=\$_l _th_iv_r_$_n=\$_r"; fi
+		fi
+		_i=$(( _i + 1 ))
+	done
+	if test $_n -eq 0
+	then TUISH_HOST_SEGS="$_c0 $3"; return 0; fi
+
+	# Sweep left to right: step over whatever covers the cursor, emit whatever is free up to
+	# the next child's left edge. Gaps, overlaps, and children wider than the span all fall
+	# out of it without a special case.
+	while test "$_cur" -le "$_c1"
+	do
+		_hit=0; _i=1
+		while test $_i -le $_n
+		do
+			eval "_l=\$_th_iv_l_$_i _r=\$_th_iv_r_$_i"
+			if test "$_cur" -ge "$_l" && test "$_cur" -le "$_r"
+			then _cur=$(( _r + 1 )); _hit=1; break; fi
+			_i=$(( _i + 1 ))
+		done
+		test "$_hit" -eq 1 && continue
+
+		_next=$(( _c1 + 1 )); _i=1
+		while test $_i -le $_n
+		do
+			eval "_l=\$_th_iv_l_$_i"
+			test "$_l" -gt "$_cur" && test "$_l" -lt "$_next" && _next=$_l
+			_i=$(( _i + 1 ))
+		done
+		TUISH_HOST_SEGS="${TUISH_HOST_SEGS}${TUISH_HOST_SEGS:+ }$_cur $(( _next - _cur ))"
+		_cur=$_next
+	done
+	test -n "$TUISH_HOST_SEGS"
+}
+
 # ─── Focus ───────────────────────────────────────────────────────
-# Which child has the keyboard. '' is the host itself.
+# Give the keyboard to a child; no argument takes it back for the host. To ASK who has it,
+# read TUISH_HOST_FOCUS — it is a variable, not a call.
 tuish_host_focus ()   # [$1 = id]
 {
-	if test $# -ge 1
-	then _th_focus="$1"
-	else printf '%s' "$_th_focus"
-	fi
+	TUISH_HOST_FOCUS="${1:-}"
 	return 0
 }
 
@@ -320,7 +446,7 @@ tuish_host_paint ()
 		eval "_c=\$_th_ctx_$_i _id=\$_th_id_$_i"
 		if test -n "$_c"
 		then
-			if test "$_id" = "$_th_focus"
+			if test "$_id" = "$TUISH_HOST_FOCUS"
 			then _fc=$_c
 			else tuish_ctx_render "$_c"
 			fi
@@ -338,9 +464,22 @@ tuish_host_paint ()
 # one small widget.
 tuish_host_paint_focus ()
 {
-	test -n "$_th_focus" || return 0
-	tuish_host_ctx "$_th_focus"
-	test -n "$TUISH_HOST_CTX" && tuish_ctx_render "$TUISH_HOST_CTX"
+	test -n "$TUISH_HOST_FOCUS" || return 0
+	tuish_host_render "$TUISH_HOST_FOCUS" || :
+	return 0
+}
+
+# Repaint ONE child, now, into the host's open frame. PREDICATE: 1 if nobody has that id.
+#
+# A host that has just changed what a single child SHOWS — the website recompiles the code
+# you typed and the picture beneath it has to catch up — wants that child repainted and
+# nothing else. Without this it has to fetch the child's context and call tuish_ctx_render
+# on it, which means knowing that a child IS a context. Out here it is not: it is an id.
+tuish_host_render ()   # $1 = id
+{
+	tuish_host_ctx "$1"
+	test -n "$TUISH_HOST_CTX" || return 1
+	tuish_ctx_render "$TUISH_HOST_CTX"
 	return 0
 }
 
@@ -378,32 +517,33 @@ tuish_host_route ()
 	case "$TUISH_EVENT_KIND" in
 		mouse)
 			test "$_th_n" -gt 0 || return 1
+			# tuish_host_at leaves the slot it hit in _th_i, so its context and its modal
+			# flag are one eval away rather than two more scans of the table.
 			tuish_host_at "$TUISH_MOUSE_X" "$TUISH_MOUSE_Y"
 			test -n "$TUISH_HOST_HIT" || return 1
 			_id=$TUISH_HOST_HIT
-			tuish_host_ctx "$_id"; _c=$TUISH_HOST_CTX
+			eval "_c=\$_th_ctx_$_th_i _modal=\$_th_modal_$_th_i"
 			test -n "$_c" || return 1
-			_th_modal_of "$_id"; _modal=$_th_modal_out
 
 			case "$TUISH_EVENT" in
-				*clik) _th_focus="$_id";;
+				*clik) TUISH_HOST_FOCUS="$_id";;
 			esac
 			tuish_ctx_dispatch "$_c"
 			TUISH_HOST_DROVE=$_id
 			test "$TUISH_CTX_QUIT" = 1 && TUISH_HOST_QUIT=$_id
-			test "$_modal" = 'modal' && return 0
+			test "$_modal" -eq 1 && return 0
 			test "$TUISH_CTX_HANDLED" -eq 1 && return 0
 			return 1                       # declined: it chains back to the host
 			;;
 		key|paste)
-			test -n "$_th_focus" || return 1
-			tuish_host_ctx "$_th_focus"; _c=$TUISH_HOST_CTX
+			test -n "$TUISH_HOST_FOCUS" || return 1
+			_th_find "$TUISH_HOST_FOCUS" || return 1
+			eval "_c=\$_th_ctx_$_th_i _modal=\$_th_modal_$_th_i"
 			test -n "$_c" || return 1
 			tuish_ctx_dispatch "$_c"
-			TUISH_HOST_DROVE=$_th_focus
-			test "$TUISH_CTX_QUIT" = 1 && TUISH_HOST_QUIT=$_th_focus
-			_th_modal_of "$_th_focus"
-			test "$_th_modal_out" = 'modal' && return 0
+			TUISH_HOST_DROVE=$TUISH_HOST_FOCUS
+			test "$TUISH_CTX_QUIT" = 1 && TUISH_HOST_QUIT=$TUISH_HOST_FOCUS
+			test "$_modal" -eq 1 && return 0
 			test "$TUISH_CTX_HANDLED" -eq 1 && return 0
 			return 1
 			;;
@@ -425,32 +565,12 @@ tuish_host_route ()
 	return 1
 }
 
-_th_modal_out=''
-_th_modal_of ()   # $1 = id
-{
-	local _i=1 _id
-	_th_modal_out=''
-	while test $_i -le $_th_n
-	do
-		eval "_id=\$_th_id_$_i"
-		if test "$_id" = "$1"
-		then eval "_th_modal_out=\$_th_modal_$_i"; return 0; fi
-		_i=$(( _i + 1 ))
-	done
-	return 0
-}
-
 # Unmount a child by id (the host's answer to TUISH_HOST_QUIT, usually).
 tuish_host_drop ()   # $1 = id
 {
-	local _i=1 _id
-	while test $_i -le $_th_n
-	do
-		eval "_id=\$_th_id_$_i"
-		if test "$_id" = "$1"
-		then _th_unmount $_i; _th_adopt_interval; return 0; fi
-		_i=$(( _i + 1 ))
-	done
+	_th_find "$1" || return 0
+	_th_unmount $_th_i
+	_th_adopt_interval
 	return 0
 }
 
@@ -461,7 +581,7 @@ tuish_host_clear ()
 	while test $_i -le $_th_n
 	do _th_unmount $_i; _i=$(( _i + 1 )); done
 	_th_n=0
-	_th_focus=''
+	TUISH_HOST_FOCUS=''
 	test -n "$_th_interval" && tuish_idle_interval "$_th_interval"
 	return 0
 }
