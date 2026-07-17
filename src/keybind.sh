@@ -98,3 +98,143 @@ tuish_dispatch ()
 
 	return 1
 }
+
+# ─── Held keys, on a keyboard that cannot say so ─────────────────
+#
+# A plain VT reports no key release. Hold a key and the tty simply repeats the same event at
+# the OS autorepeat rate — so "is A down?" has no direct answer, and an app that wants one
+# has to infer it from RECENCY: a repeat arrived a moment ago, therefore the key is still
+# down; nothing for a while, therefore it was let go.
+#
+# That inference has exactly one number in it, and the number has to sit between two
+# timescales the app does not control:
+#
+#     autorepeat interval  ~33ms  --> the window must EXCEED this, or a held key
+#                                     looks released in the gaps between repeats
+#     the window           150ms
+#     initial repeat delay ~500ms --> the window must FALL SHORT of this, or a single
+#                                     tap is still "down" when the first repeat lands,
+#                                     and a tap becomes a hold
+#
+# Miss on either side and it is not subtly wrong, it is the wrong feature. examples/game.sh
+# carried this window by hand (as MOVE_TTL_US) with the same value and the same reasoning,
+# and every other real-time app would have had to rediscover it. The decay also has to ride
+# the CONTEXT's tick — a hosted child is ticked at its own negotiated rate, which it cannot
+# compute for itself without asking whether it is hosted, and asking that is a smell
+# (docs/hosting.md). So it belongs here.
+#
+# Kitty sharpens this and is never required: with tuish_detailed_on the terminal sends real
+# `-rep`/`-rel` events, and the stamp below uses them when they arrive — a release zeroes
+# the window outright instead of waiting it out. Same API, same app code, better source.
+
+# Declare the keys this context tracks. Replaces the set, like a fresh declaration and not
+# an append — call it once in your setup, next to your binds.
+tuish_key_track ()   # $@ = event names, e.g. 'char a' 'left'
+{
+	local _tuish_kt_a
+	_tuish_key_set=''
+	for _tuish_kt_a in "$@"
+	do
+		_tuish_kb_sanitize "$_tuish_kt_a"
+		_tuish_key_set="${_tuish_key_set} ${_tuish_kb_key}:0"
+	done
+	return 0
+}
+
+# The window, in seconds. See the timescales above before changing it.
+tuish_key_ttl ()   # $1 = seconds, e.g. 0.15
+{
+	_tuish_timeout_us "$1"
+	_tuish_key_ttl_us=$_tuish_tick_us
+	return 0
+}
+
+# Is any of these keys down? Several, because aliasing is the normal case: a game binds
+# `left` and `char a` to one action and wants one question, not two.
+#
+# The answer is an exit status, which does not break the "answers come back in variables"
+# rule — that rule bans stdout, because asking a question must not cost a fork. A status
+# forks nothing. tuish_hosted and tuish_host_owns_row answer the same way.
+tuish_key_down ()   # $@ = event names
+{
+	local _tuish_kq_a
+	for _tuish_kq_a in "$@"
+	do
+		_tuish_kb_sanitize "$_tuish_kq_a"
+		case " $_tuish_key_set " in
+			*" ${_tuish_kb_key}:0 "*) ;;          # tracked, window empty
+			*" ${_tuish_kb_key}:"*) return 0;;    # tracked, window open
+		esac
+	done
+	return 1
+}
+
+# Refill a tracked key's window, and say whether this event was a REPEAT.
+#
+# Called from the event hot path, so it does no work an app has not asked for: the caller
+# tests _tuish_key_set first.
+_tuish_key_stamp ()
+{
+	local _tuish_ks_n="$TUISH_EVENT" _tuish_ks_t=$_tuish_key_ttl_us
+
+	# Kitty detailed mode reports the truth, so believe it over the inference: a held key
+	# repeats as `<key>-rep` and ends with `<key>-rel`. Fold both onto the pressed key's
+	# slot — a release empties the window at once rather than waiting it out.
+	case "$_tuish_ks_n" in
+		*-rel) _tuish_ks_n="${_tuish_ks_n%-rel}"; _tuish_ks_t=0;;
+		*-rep) _tuish_ks_n="${_tuish_ks_n%-rep}";;
+	esac
+	# ...and then put back what hid.sh dropped. It spells an unmodified printable PRESS
+	# `char a`, but its REPEAT `a-rep` — the suffix path does not re-add the `char ` prefix.
+	# Left alone, the repeats miss the slot the press created and a physically-held key
+	# reads as up the moment any app calls tuish_detailed_on. A one-BYTE name can only be
+	# that case: every other event name is two or more (`up`, `f1`, `tab`), and a modified
+	# one keeps its prefix (`ctrl-a-rep` -> `ctrl-a`, a real name that must NOT be rewritten).
+	# LC_ALL=C is pinned, so `?` is one byte — a kitty repeat of a non-ASCII key will not
+	# re-acquire its `char `. Games track ASCII.
+	case "$_tuish_ks_n" in ?) _tuish_ks_n="char ${_tuish_ks_n}";; esac
+
+	_tuish_kb_sanitize "$_tuish_ks_n"
+	TUISH_KEY_REPEAT=0
+	case " $_tuish_key_set " in
+		*" ${_tuish_kb_key}:0 "*) ;;             # tracked, was up -> a fresh press
+		*" ${_tuish_kb_key}:"*) TUISH_KEY_REPEAT=1;;   # tracked, still down -> a repeat
+		*) return 0;;                            # not tracked at all
+	esac
+
+	local _tuish_ks_out='' _tuish_ks_p
+	for _tuish_ks_p in $_tuish_key_set
+	do
+		case "$_tuish_ks_p" in
+			"${_tuish_kb_key}:"*) _tuish_ks_p="${_tuish_kb_key}:${_tuish_ks_t}";;
+		esac
+		_tuish_ks_out="${_tuish_ks_out} ${_tuish_ks_p}"
+	done
+	_tuish_key_set="$_tuish_ks_out"
+	return 0
+}
+
+# Age every open window by one tick. The caller has already established that at least one
+# is open, so this never runs on an idle nobody is tracking keys through.
+#
+# Its own function, and that is load-bearing rather than tidy: it needs a `for`, and a loop
+# variable still live in tuish_run's frame when a read-then-render fires gets ECHOED to the
+# terminal under zsh (see the invariant above _tuish_kitty_decode in event.sh). Dying on
+# return is the whole point.
+_tuish_key_decay ()
+{
+	local _tuish_kd_out='' _tuish_kd_p _tuish_kd_t
+	for _tuish_kd_p in $_tuish_key_set
+	do
+		_tuish_kd_t="${_tuish_kd_p##*:}"
+		if test "$_tuish_kd_t" -gt 0
+		then
+			_tuish_kd_t=$(( _tuish_kd_t - TUISH_TICK_US ))
+			test "$_tuish_kd_t" -lt 0 && _tuish_kd_t=0
+			_tuish_kd_p="${_tuish_kd_p%:*}:${_tuish_kd_t}"
+		fi
+		_tuish_kd_out="${_tuish_kd_out} ${_tuish_kd_p}"
+	done
+	_tuish_key_set="$_tuish_kd_out"
+	return 0
+}

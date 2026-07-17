@@ -134,6 +134,29 @@ command -v tuish_ctx_register >/dev/null 2>&1 && tuish_ctx_register _tuish_rende
 # middle of the very dispatch it is reporting on.
 TUISH_HANDLED=0
 
+# ─── Was this key event a REPEAT? ────────────────────────────────
+# 1 if the key event in flight is the terminal autorepeating a key that was already down,
+# 0 if it is a fresh press. Set by _tuish_key_stamp (keybind.sh) for tracked keys only, and
+# meaningful on a `key` event.
+#
+# This is the press/repeat split that the kitty protocol reports natively and a plain VT
+# does not — synthesized from the window keybind.sh is already keeping: the slot was empty,
+# so this is a press; the slot was open, so the key never came up.
+#
+# It is what makes an app EDGE-TRIGGERABLE, and without it the tracking API cannot serve its
+# own motivating case. A binding cannot ask tuish_key_down to tell a press from a repeat,
+# because by the time the binding runs the window has been refilled either way — that is
+# deliberate (a handler must be able to ask about the key that just arrived), and it means
+# the distinction has to be handed to it rather than derived by it. A game reads this to
+# step exactly one tile on the press and let the tick own the run; without it, movement has
+# to come off the tick alone, and a tap moves however far one window happens to be worth.
+#
+# DEVICE-global, for TUISH_HANDLED's reason above: it describes the single event in flight,
+# and a per-context copy would be swapped out by tuish_ctx_activate in the middle of the
+# dispatch it is reporting on. A host driving two children re-derives it per child anyway,
+# because _tuish_ctx_drive re-enters the parse against that child's own tracked set.
+TUISH_KEY_REPEAT=0
+
 # "I saw this event and I am not acting on it." An action calls this to hand the
 # event back to whoever hosts it, so a bound-but-inert key still chains: an editor
 # already scrolled to the bottom passes the wheel up rather than swallowing it.
@@ -197,7 +220,19 @@ _tuish_parse_event ()
 
 	case "$_class" in
 		S) TUISH_EVENT_KIND='signal'; TUISH_EVENT="${2}";;
-		F) TUISH_EVENT_KIND='idle'; TUISH_EVENT='idle';;
+		F) TUISH_EVENT_KIND='idle'; TUISH_EVENT='idle'
+		   # Age this context's held-key windows by one tick (see keybind.sh). A driven
+		   # child arrives here through tuish_ctx_tick, which only fires once the child's
+		   # OWN interval has banked — so TUISH_TICK_US is the right unit for host and
+		   # child alike, with no wall-clock read and no fork.
+		   #
+		   # One glob, and it answers BOTH questions at once: "nothing tracked" (the set is
+		   # empty) and "nothing down" (every window reads :0) alike contain no colon
+		   # followed by a non-zero digit — a sanitized key name cannot contain a colon, and
+		   # $(( )) never emits a leading zero. So an app that tracks nothing pays one
+		   # comparison per tick, and keybind.sh being unsourced is not a special case: the
+		   # set stays empty and the call is unreachable.
+		   case "$_tuish_key_set" in *:[1-9]*) _tuish_key_decay;; esac;;
 		# The pasted TEXT is NOT in the descriptor — it would not survive `set --`
 		# word splitting, and a paste can contain anything. It lives in TUISH_PASTE,
 		# which _tuish_capture_paste filled before emitting this.
@@ -260,6 +295,20 @@ _tuish_parse_event ()
 	then
 		_tuish_viewport_on_resize
 	fi
+
+	# Refill the window on a tracked key, and decide whether this is a repeat.
+	#
+	# HERE, and the position is the whole design. After the drop filters: a key the app is
+	# never shown must not count as held on its behalf. Before the handler: a binding for
+	# the very key that just arrived has to be able to ask tuish_key_down and TUISH_KEY_REPEAT
+	# and get answers about ITSELF — which is exactly what an edge-triggered action needs,
+	# and the reason the press/repeat split has to come from here rather than from the app.
+	#
+	# Set first, kind second: the set is empty for almost every app that will ever run, so
+	# the first pattern is the one that has to be cheap. `case` rather than `test -n` for
+	# that reason and no other — it is a shell keyword where test is a builtin call, and the
+	# bench puts the difference at ~0.5us of every dispatch.
+	case "$_tuish_key_set" in ?*) test "$TUISH_EVENT_KIND" = 'key' && _tuish_key_stamp;; esac
 
 	# ONE frame for the whole dispatch: the handler's output, then (if it asked for a
 	# deferred redraw) the render's, closed once at the end. Frames nest, so a handler
