@@ -26,38 +26,38 @@ _tuish_str_loaded=1
 
 tuish_str_len ()
 {
-	eval "local _sl_str=\"\${$1}\""
+	eval "local _tuish_sl_str=\"\${$1}\""
 	# Fast path: printable ASCII → byte count = char count
-	case "$_sl_str" in *[![:print:]]*)
-		local _sl_i=0 _sl_n=0
-		while _tuish_byte_val "$1" $_sl_i
+	case "$_tuish_sl_str" in *[![:print:]]*)
+		local _tuish_sl_i=0 _tuish_sl_n=0
+		while _tuish_byte_val "$1" $_tuish_sl_i
 		do
 			_tuish_utf8_len $_tuish_bval
-			_sl_i=$((_sl_i + _tuish_cbytes))
-			_sl_n=$((_sl_n + 1))
+			_tuish_sl_i=$((_tuish_sl_i + _tuish_cbytes))
+			_tuish_sl_n=$((_tuish_sl_n + 1))
 		done
-		TUISH_SLEN=$_sl_n
+		TUISH_SLEN=$_tuish_sl_n
 		return;;
 	esac
-	TUISH_SLEN=${#_sl_str}
+	TUISH_SLEN=${#_tuish_sl_str}
 }
 
 tuish_str_left ()
 {
 	# Fast path: if first $2 bytes are printable ASCII, byte off = char off
-	eval "local _sl_v=\"\${$1:0:$2}\""
-	case "$_sl_v" in *[![:print:]]*)
+	eval "local _tuish_sl_v=\"\${$1:0:$2}\""
+	case "$_tuish_sl_v" in *[![:print:]]*)
 		_tuish_char_byte_off "$1" "$2"
-		eval "_sl_v=\"\${$1:0:$_tuish_boff}\"";;
+		eval "_tuish_sl_v=\"\${$1:0:$_tuish_boff}\"";;
 	esac
-	TUISH_SLEFT=$_sl_v
+	TUISH_SLEFT=$_tuish_sl_v
 }
 
 tuish_str_right ()
 {
 	# Fast path: if first $2 bytes are printable ASCII, byte off = char off
-	eval "local _sr_pre=\"\${$1:0:$2}\""
-	case "$_sr_pre" in *[![:print:]]*)
+	eval "local _tuish_sr_pre=\"\${$1:0:$2}\""
+	case "$_tuish_sr_pre" in *[![:print:]]*)
 		_tuish_char_byte_off "$1" "$2"
 		eval "TUISH_SRIGHT=\"\${$1:$_tuish_boff}\""
 		return;;
@@ -68,8 +68,8 @@ tuish_str_right ()
 tuish_str_char ()
 {
 	# Fast path: if first $2+1 bytes are printable ASCII, byte off = char off
-	eval "local _sc_pre=\"\${$1:0:$(($2 + 1))}\""
-	case "$_sc_pre" in *[![:print:]]*)
+	eval "local _tuish_sc_pre=\"\${$1:0:$(($2 + 1))}\""
+	case "$_tuish_sc_pre" in *[![:print:]]*)
 		_tuish_char_byte_off "$1" "$2"
 		_tuish_byte_val "$1" $_tuish_boff || { TUISH_SCHAR=''; return; }
 		_tuish_utf8_len $_tuish_bval
@@ -93,59 +93,59 @@ tuish_str_repeat ()
 
 tuish_str_width ()
 {
-	eval "local _sw_str=\"\${$1}\""
-	local _sw_len=${#_sw_str}
+	eval "local _tuish_sw_str=\"\${$1}\""
+	local _tuish_sw_len=${#_tuish_sw_str}
 	# Fast path: under LC_ALL=C, [:print:] is exactly 0x20-0x7E.
 	# All printable ASCII chars have width 1, so width = byte count.
-	case "$_sw_str" in *[![:print:]]*) ;; *) TUISH_SWIDTH=$_sw_len; return;; esac
+	case "$_tuish_sw_str" in *[![:print:]]*) ;; *) TUISH_SWIDTH=$_tuish_sw_len; return;; esac
 	# Slow path: decode UTF-8 inline over the local value. Working on the
 	# value (not a variable name) lets us read bytes with direct
-	# ${_sw_str:i:1} substrings, avoiding per-byte eval/indirection — the
+	# ${_tuish_sw_str:i:1} substrings, avoiding per-byte eval/indirection — the
 	# reason the decode is inlined here (and in tuish_str_window) rather than
 	# factored into a shared helper, which would need a per-char eval or string
 	# copy. _tuish_ord returns unsigned 1-255 (ord.sh), so no signed correction.
-	local _sw_i=0 _sw_b0 _sw_b1 _sw_b2 _sw_cp _sw_w=0
-	while test $_sw_i -lt $_sw_len
+	local _tuish_sw_i=0 _tuish_sw_b0 _tuish_sw_b1 _tuish_sw_b2 _tuish_sw_cp _tuish_sw_w=0
+	while test $_tuish_sw_i -lt $_tuish_sw_len
 	do
-		_tuish_ord "${_sw_str:$_sw_i:1}"
-		_sw_b0=$_tuish_code
+		_tuish_ord "${_tuish_sw_str:$_tuish_sw_i:1}"
+		_tuish_sw_b0=$_tuish_code
 		# The continuation-byte count a lead implies is only read when those
-		# bytes are actually present (the `&& test i+n -lt _sw_len` guards).
+		# bytes are actually present (the `&& test i+n -lt _tuish_sw_len` guards).
 		# A lead whose continuations run past the end — a string sliced mid
 		# sequence — falls through to the final branch and is counted as one
-		# width-1 cell, so the scan can never read past _sw_len.
-		if test $_sw_b0 -lt 128
+		# width-1 cell, so the scan can never read past _tuish_sw_len.
+		if test $_tuish_sw_b0 -lt 128
 		then
-			_sw_cp=$_sw_b0
-			_sw_i=$((_sw_i + 1))
-		elif test $_sw_b0 -lt 224 && test $((_sw_i + 1)) -lt $_sw_len
+			_tuish_sw_cp=$_tuish_sw_b0
+			_tuish_sw_i=$((_tuish_sw_i + 1))
+		elif test $_tuish_sw_b0 -lt 224 && test $((_tuish_sw_i + 1)) -lt $_tuish_sw_len
 		then
-			_tuish_cont6 "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_c6
-			_sw_cp=$(( (_sw_b0 & 31) * 64 + _sw_b1 ))
-			_sw_i=$((_sw_i + 2))
-		elif test $_sw_b0 -lt 240 && test $((_sw_i + 2)) -lt $_sw_len
+			_tuish_cont6 "${_tuish_sw_str:$((_tuish_sw_i + 1)):1}"; _tuish_sw_b1=$_tuish_c6
+			_tuish_sw_cp=$(( (_tuish_sw_b0 & 31) * 64 + _tuish_sw_b1 ))
+			_tuish_sw_i=$((_tuish_sw_i + 2))
+		elif test $_tuish_sw_b0 -lt 240 && test $((_tuish_sw_i + 2)) -lt $_tuish_sw_len
 		then
-			_tuish_cont6 "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_c6
-			_tuish_cont6 "${_sw_str:$((_sw_i + 2)):1}"; _sw_b2=$_tuish_c6
-			_sw_cp=$(( (_sw_b0 & 15) * 4096 + _sw_b1 * 64 + _sw_b2 ))
-			_sw_i=$((_sw_i + 3))
-		elif test $_sw_b0 -lt 248 && test $((_sw_i + 3)) -lt $_sw_len
+			_tuish_cont6 "${_tuish_sw_str:$((_tuish_sw_i + 1)):1}"; _tuish_sw_b1=$_tuish_c6
+			_tuish_cont6 "${_tuish_sw_str:$((_tuish_sw_i + 2)):1}"; _tuish_sw_b2=$_tuish_c6
+			_tuish_sw_cp=$(( (_tuish_sw_b0 & 15) * 4096 + _tuish_sw_b1 * 64 + _tuish_sw_b2 ))
+			_tuish_sw_i=$((_tuish_sw_i + 3))
+		elif test $_tuish_sw_b0 -lt 248 && test $((_tuish_sw_i + 3)) -lt $_tuish_sw_len
 		then
-			_tuish_cont6 "${_sw_str:$((_sw_i + 1)):1}"; _sw_b1=$_tuish_c6
-			_tuish_cont6 "${_sw_str:$((_sw_i + 2)):1}"; _sw_b2=$_tuish_c6
-			_tuish_cont6 "${_sw_str:$((_sw_i + 3)):1}"
-			_sw_cp=$(( (_sw_b0 & 7) * 262144 + _sw_b1 * 4096 + _sw_b2 * 64 + _tuish_c6 ))
-			_sw_i=$((_sw_i + 4))
+			_tuish_cont6 "${_tuish_sw_str:$((_tuish_sw_i + 1)):1}"; _tuish_sw_b1=$_tuish_c6
+			_tuish_cont6 "${_tuish_sw_str:$((_tuish_sw_i + 2)):1}"; _tuish_sw_b2=$_tuish_c6
+			_tuish_cont6 "${_tuish_sw_str:$((_tuish_sw_i + 3)):1}"
+			_tuish_sw_cp=$(( (_tuish_sw_b0 & 7) * 262144 + _tuish_sw_b1 * 4096 + _tuish_sw_b2 * 64 + _tuish_c6 ))
+			_tuish_sw_i=$((_tuish_sw_i + 4))
 		else
 			# Stray continuation byte, invalid lead (0xF8-0xFF), or a lead
 			# whose continuations are truncated: count one cell, advance one.
-			_sw_cp=$_sw_b0
-			_sw_i=$((_sw_i + 1))
+			_tuish_sw_cp=$_tuish_sw_b0
+			_tuish_sw_i=$((_tuish_sw_i + 1))
 		fi
-		_tuish_char_width $_sw_cp
-		_sw_w=$((_sw_w + _tuish_cw))
+		_tuish_char_width $_tuish_sw_cp
+		_tuish_sw_w=$((_tuish_sw_w + _tuish_cw))
 	done
-	TUISH_SWIDTH=$_sw_w
+	TUISH_SWIDTH=$_tuish_sw_w
 }
 
 # ─── Horizontal window (display columns) ─────────────────────────
@@ -160,60 +160,60 @@ tuish_str_width ()
 # combining marks follow their visible base. Returns content only (no padding).
 tuish_str_window ()
 {
-	eval "local _wn_str=\"\${$1}\""
-	local _wn_off=$2 _wn_w=$3
-	local _wn_end=$((_wn_off + _wn_w))
-	local _wn_len=${#_wn_str}
+	eval "local _tuish_wn_str=\"\${$1}\""
+	local _tuish_wn_off=$2 _tuish_wn_w=$3
+	local _tuish_wn_end=$((_tuish_wn_off + _tuish_wn_w))
+	local _tuish_wn_len=${#_tuish_wn_str}
 	# Fast path: all printable ASCII → every char is width 1, so display column
 	# == byte offset and the window is a plain substring.
-	case "$_wn_str" in *[![:print:]]*) ;; *)
+	case "$_tuish_wn_str" in *[![:print:]]*) ;; *)
 		TUISH_SWINDOW=''
-		test "$_wn_off" -lt "$_wn_len" && TUISH_SWINDOW="${_wn_str:$_wn_off:$_wn_w}"
+		test "$_tuish_wn_off" -lt "$_tuish_wn_len" && TUISH_SWINDOW="${_tuish_wn_str:$_tuish_wn_off:$_tuish_wn_w}"
 		return 0;;
 	esac
 	# Slow path: decode UTF-8 (mirrors tuish_str_width), tracking the running
-	# display column _wn_col (the start column of the current char).
-	local _wn_i=0 _wn_col=0 _wn_b0 _wn_b1 _wn_b2 _wn_cp _wn_n _wn_ch _wn_out=''
-	while test $_wn_i -lt $_wn_len
+	# display column _tuish_wn_col (the start column of the current char).
+	local _tuish_wn_i=0 _tuish_wn_col=0 _tuish_wn_b0 _tuish_wn_b1 _tuish_wn_b2 _tuish_wn_cp _tuish_wn_n _tuish_wn_ch _tuish_wn_out=''
+	while test $_tuish_wn_i -lt $_tuish_wn_len
 	do
-		_tuish_ord "${_wn_str:$_wn_i:1}"; _wn_b0=$_tuish_code
-		if test $_wn_b0 -lt 128
-		then _wn_n=1; _wn_cp=$_wn_b0
-		elif test $_wn_b0 -lt 224 && test $((_wn_i + 1)) -lt $_wn_len
-		then _tuish_cont6 "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_c6
-		     _wn_n=2; _wn_cp=$(( (_wn_b0 & 31) * 64 + _wn_b1 ))
-		elif test $_wn_b0 -lt 240 && test $((_wn_i + 2)) -lt $_wn_len
-		then _tuish_cont6 "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_c6
-		     _tuish_cont6 "${_wn_str:$((_wn_i + 2)):1}"; _wn_b2=$_tuish_c6
-		     _wn_n=3; _wn_cp=$(( (_wn_b0 & 15) * 4096 + _wn_b1 * 64 + _wn_b2 ))
-		elif test $_wn_b0 -lt 248 && test $((_wn_i + 3)) -lt $_wn_len
-		then _tuish_cont6 "${_wn_str:$((_wn_i + 1)):1}"; _wn_b1=$_tuish_c6
-		     _tuish_cont6 "${_wn_str:$((_wn_i + 2)):1}"; _wn_b2=$_tuish_c6
-		     _tuish_cont6 "${_wn_str:$((_wn_i + 3)):1}"
-		     _wn_n=4; _wn_cp=$(( (_wn_b0 & 7) * 262144 + _wn_b1 * 4096 + _wn_b2 * 64 + _tuish_c6 ))
-		else _wn_n=1; _wn_cp=$_wn_b0
+		_tuish_ord "${_tuish_wn_str:$_tuish_wn_i:1}"; _tuish_wn_b0=$_tuish_code
+		if test $_tuish_wn_b0 -lt 128
+		then _tuish_wn_n=1; _tuish_wn_cp=$_tuish_wn_b0
+		elif test $_tuish_wn_b0 -lt 224 && test $((_tuish_wn_i + 1)) -lt $_tuish_wn_len
+		then _tuish_cont6 "${_tuish_wn_str:$((_tuish_wn_i + 1)):1}"; _tuish_wn_b1=$_tuish_c6
+		     _tuish_wn_n=2; _tuish_wn_cp=$(( (_tuish_wn_b0 & 31) * 64 + _tuish_wn_b1 ))
+		elif test $_tuish_wn_b0 -lt 240 && test $((_tuish_wn_i + 2)) -lt $_tuish_wn_len
+		then _tuish_cont6 "${_tuish_wn_str:$((_tuish_wn_i + 1)):1}"; _tuish_wn_b1=$_tuish_c6
+		     _tuish_cont6 "${_tuish_wn_str:$((_tuish_wn_i + 2)):1}"; _tuish_wn_b2=$_tuish_c6
+		     _tuish_wn_n=3; _tuish_wn_cp=$(( (_tuish_wn_b0 & 15) * 4096 + _tuish_wn_b1 * 64 + _tuish_wn_b2 ))
+		elif test $_tuish_wn_b0 -lt 248 && test $((_tuish_wn_i + 3)) -lt $_tuish_wn_len
+		then _tuish_cont6 "${_tuish_wn_str:$((_tuish_wn_i + 1)):1}"; _tuish_wn_b1=$_tuish_c6
+		     _tuish_cont6 "${_tuish_wn_str:$((_tuish_wn_i + 2)):1}"; _tuish_wn_b2=$_tuish_c6
+		     _tuish_cont6 "${_tuish_wn_str:$((_tuish_wn_i + 3)):1}"
+		     _tuish_wn_n=4; _tuish_wn_cp=$(( (_tuish_wn_b0 & 7) * 262144 + _tuish_wn_b1 * 4096 + _tuish_wn_b2 * 64 + _tuish_c6 ))
+		else _tuish_wn_n=1; _tuish_wn_cp=$_tuish_wn_b0
 		fi
-		_tuish_char_width $_wn_cp
-		_wn_ch="${_wn_str:$_wn_i:$_wn_n}"
+		_tuish_char_width $_tuish_wn_cp
+		_tuish_wn_ch="${_tuish_wn_str:$_tuish_wn_i:$_tuish_wn_n}"
 		if test "$_tuish_cw" -eq 0
 		then
 			# combining mark: keep it iff attached to a visible base
-			if test $_wn_col -gt $_wn_off && test $_wn_col -le $_wn_end
-			then _wn_out="${_wn_out}${_wn_ch}"; fi
-		elif test $((_wn_col + _tuish_cw)) -le $_wn_off
+			if test $_tuish_wn_col -gt $_tuish_wn_off && test $_tuish_wn_col -le $_tuish_wn_end
+			then _tuish_wn_out="${_tuish_wn_out}${_tuish_wn_ch}"; fi
+		elif test $((_tuish_wn_col + _tuish_cw)) -le $_tuish_wn_off
 		then :                                   # entirely left of the window
-		elif test $_wn_col -ge $_wn_end
+		elif test $_tuish_wn_col -ge $_tuish_wn_end
 		then break                               # entirely right (and all after)
-		elif test $_wn_col -lt $_wn_off
-		then _wn_out="${_wn_out} "  # left straddle: visible right half
-		elif test $((_wn_col + _tuish_cw)) -gt $_wn_end
+		elif test $_tuish_wn_col -lt $_tuish_wn_off
+		then _tuish_wn_out="${_tuish_wn_out} "  # left straddle: visible right half
+		elif test $((_tuish_wn_col + _tuish_cw)) -gt $_tuish_wn_end
 		then break                               # right straddle: does not fit, drop
-		else _wn_out="${_wn_out}${_wn_ch}"   # fully inside
+		else _tuish_wn_out="${_tuish_wn_out}${_tuish_wn_ch}"   # fully inside
 		fi
-		_wn_col=$((_wn_col + _tuish_cw))
-		_wn_i=$((_wn_i + _wn_n))
+		_tuish_wn_col=$((_tuish_wn_col + _tuish_cw))
+		_tuish_wn_i=$((_tuish_wn_i + _tuish_wn_n))
 	done
-	TUISH_SWINDOW=$_wn_out
+	TUISH_SWINDOW=$_tuish_wn_out
 }
 
 # ─── Codepoint width classification ──────────────────────────────
@@ -477,9 +477,9 @@ _tuish_char_width ()
 # Result in _tuish_bval. Returns 1 (false) at end of string.
 _tuish_byte_val ()
 {
-	eval "local _bv_ch=\"\${$1:$2:1}\""
-	if test -z "$_bv_ch"; then _tuish_bval=0; return 1; fi
-	_tuish_ord "$_bv_ch"
+	eval "local _tuish_bv_ch=\"\${$1:$2:1}\""
+	if test -z "$_tuish_bv_ch"; then _tuish_bval=0; return 1; fi
+	_tuish_ord "$_tuish_bv_ch"
 	_tuish_bval=$_tuish_code
 	if test $_tuish_bval -lt 0; then _tuish_bval=$((_tuish_bval + 256)); fi
 }

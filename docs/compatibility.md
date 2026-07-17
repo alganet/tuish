@@ -53,7 +53,34 @@ Full support with minor caveats:
 - Alt+Ctrl+letter delivery is unreliable under zsh+tmux.
 
 ### ksh93
-Full support. `local` is aliased to `typeset` for POSIX-style functions.
+Full support, but it costs one trick, and the trick is worth understanding.
+
+`local` is aliased to `typeset` — and **`typeset` does not create a local variable in a
+POSIX `f () { ... }` function.** It only does so in a ksh-style `function f { ... }` one.
+Every function in tuish is POSIX-style, so on ksh93 that alias is a lie: every `local`
+declares a *global*, and a framework helper's scratch variable will happily overwrite a
+caller variable of the same name. (draw.sh holds a box's top border in `local _top`; a host
+that keeps its layout row in `_top` got the string `╭────────╮` back where its row used to
+be.)
+
+So after everything is sourced, `tuish_init` calls `tuish_fnfix` (compat.sh): it dumps each
+framework function with `typeset -f` and re-declares it with the `function` keyword, which
+makes `local` mean local. Detection is by **feature** — declare a local in a throwaway
+function and see whether it escapes — not by shell name, so every other shell skips it.
+
+Three things are deliberately left as POSIX functions, and each is load-bearing:
+
+| left POSIX | why |
+|---|---|
+| the trap path (`_tuish_init_term`, `tuish_fini`, …) | a ksh-style function owns its traps: an EXIT trap set inside one fires when the **function** returns, not when the process exits |
+| `tuish_run` | entering a ksh-style function **resets traps to default** for that scope, so a signal arriving while one is on the stack is *discarded*, not deferred. `tuish_run` is where the process blocks on `read` — exactly where SIGWINCH lands. Convert it and resizes vanish. |
+| the `tuish_str_*` readers | ksh-style functions are **statically scoped**, so a callee cannot see a caller's local. tuish's no-fork idiom passes a variable *name* (`tuish_str_width _t`) for the callee to dereference. Left POSIX, they run in the caller's scope and can still read what they were handed. |
+
+App functions are never converted, for the same trap reason (your `_main` is on the stack
+for the whole run) — and because they don't need to be: the bug is a *framework* local
+overwriting an *app* global, and fixing the framework's side ends it.
+
+`tests/unit/test_scope.sh` pins all of this.
 
 ### mksh (MIRBSD KSH)
 Full support. `local` is aliased to `typeset`. Uses `echo -ne` instead

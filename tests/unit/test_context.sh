@@ -29,6 +29,13 @@ TESTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 . "$TESTS_DIR/../src/str.sh"
 . "$TESTS_DIR/../src/keybind.sh"
 
+
+# Exercise the SHIPPED configuration. tuish_fnfix normally fires from tuish_init, which unit
+# tests deliberately never call (they stub the device) — so without this, every suite here
+# would validate the framework with its ksh `local` still leaking, i.e. not the library that
+# actually runs. It is a no-op on every shell whose `local` already works.
+command -v tuish_fnfix >/dev/null 2>&1 && tuish_fnfix
+
 printf 'Unit tests: contexts, regions, idle negotiation\n'
 
 TUISH_LINES=30
@@ -49,10 +56,10 @@ assert_eq "$TUISH_VIEW_TOP"  "5"  "region: view top is the region row"
 assert_eq "$TUISH_VIEW_LEFT" "19" "region: view left is the 0-based region column"
 assert_eq "$TUISH_VIEW_COLS" "30" "region: view cols is the region width"
 assert_eq "$TUISH_VIEW_ROWS" "10" "region: view rows is the region height"
-assert_eq "$_tuish_hosted"   "1"  "region: child is marked hosted"
+assert_eq "$_tuish_owns_dev" "0"  "region: a seated child does NOT own the device"
 
 tuish_ctx_activate "$TUISH_CTX_ROOT"
-assert_eq "$_tuish_hosted"   "0"  "region: the root is NOT hosted"
+assert_eq "$_tuish_owns_dev" "1"  "region: the root DOES own the device"
 assert_eq "$TUISH_VIEW_LEFT" "0"  "region: the root keeps column origin 0"
 
 # --- Re-seating (tuish_ctx_reseat) -------------------------------------------

@@ -42,7 +42,53 @@ adopts the context its host created for it.
 | `tuish_ctx_activate CTX`          | Spill the current context, fill the working set from `CTX`            |
 | `tuish_ctx_reseat CTX R C W H`    | Move a child's rectangle (call from the host's resize handler)        |
 | `tuish_ctx_destroy CTX`           | Free a context's bindings and drop its saved frame                    |
-| `tuish_ctx_register NAME...`      | Register working vars as marshalled context fields (for modules)      |
+| `tuish_ctx_register NAME...`      | Register working vars as marshalled context fields (for **modules**)  |
+| `tuish_ctx_declare SET NAME...`   | Declare an **app's** field set, once, at source time                  |
+| `tuish_ctx_fields SET`            | Attach a declared set to the active context (in your `_setup`)        |
+
+### State that belongs to an INSTANCE
+
+An app's state lives in plain shell globals -- `_cur_row`, `_view_top` -- and a shell has
+exactly one of each. So mounting the same app **twice** used to mean two widgets sharing one
+cursor: type in the left editor and the right one's caret moved.
+
+Declare the state instead, and each instance gets its own copy:
+
+```sh
+_cur_row=1                       # the defaults, written where they belong
+_view_top=1
+_status_msg=''
+
+tuish_ctx_declare _ed  _cur_row _view_top _status_msg     # once, at SOURCE time
+
+_ed_setup ()
+{
+	tuish_init
+	tuish_ctx_fields _ed         # this instance's copy, at those defaults
+	...
+}
+```
+
+`tuish_ctx_fields` resets the set to its declared defaults on attach, so it also replaces the
+hand-written "fresh state each launch" block an app would otherwise need.
+
+**Declare at source time, not inside `_setup`.** It looks like it should not matter, and it is
+the one thing that must be right: the defaults are captured when you declare. Declare inside
+`_setup` and the *second* instance captures whatever the *first* one currently holds -- it
+would open on the other editor's cursor row.
+
+Two tiers, and the difference is who they belong to:
+
+| | `tuish_ctx_register` | `tuish_ctx_declare` / `tuish_ctx_fields` |
+|---|---|---|
+| for | framework modules | apps |
+| marshalled for | **every** context | only contexts that attached the set |
+| defaults captured | at registration | at declaration (source time) |
+| two instances | share nothing (framework state is per-context anyway) | **each gets its own copy** |
+
+See `examples/twins.sh` -- two copies of the editor, side by side, in one loop. The editor is
+unchanged, and does not know there is another one of it.
+
 
 | Variable         | Meaning                                                    |
 |------------------|------------------------------------------------------------|
@@ -88,6 +134,53 @@ the host put it, and the reader is left looking at whatever was on screen undern
 returns from a `tuish_run` of its own, so cleanup placed after `tuish_run` never
 runs. `tuish_fini` invokes the registered hook on **every** exit path -- standalone
 teardown, modal return, and cooperative unmount.
+
+Use it for state that is *yours* -- a scratch buffer to free, a file to flush.
+
+### An app REQUESTS device state. It never restores it.
+
+This is the one rule that makes hosting seamless, and it is worth stating as a rule because
+the alternative looks so reasonable.
+
+The terminal is **singular**. Your context is not. So when you switch on the alt-screen, the
+mouse, a caret shape, autowrap, or kitty's detailed mode, you are not changing *your*
+state -- you are changing the one terminal that you, your host, and every sibling widget are
+all looking at. Turning it back off on your way out reaches outside the rectangle you own.
+
+And a fini hook is exactly where that goes wrong, because a host unmounts a child for its own
+reasons: the reader left edit mode, or the widget scrolled off the pane. One editor closing
+would reset the caret under another one still being typed into.
+
+So: **declare what you want, and stop there.**
+
+```sh
+_app_setup ()
+{
+	tuish_init
+	tuish_cursor_shape 6      # "I want a bar caret." That is the whole contract.
+	tuish_mouse_on            # "I want mouse events."
+	...
+}
+                              # No fini hook. Nothing to put back.
+```
+
+The framework tracks every such request against the *device* (not against your context, which
+may be long destroyed by the time anyone asks) and puts the terminal back exactly once, when
+the process actually exits. Where the answer depends on who is active -- autowrap, which the
+drawing code reads to know whether the terminal clips at the right edge -- it is reconciled
+for you on every context switch.
+
+The device layer owns, and will restore: **alt-screen, scroll region, mouse tracking, caret
+shape, autowrap, kitty detailed mode, bracketed paste, focus events, `stty`, and the signal
+traps.**
+
+> `tuish_hosted` still exists, and a host may legitimately ask. But **in an app it is a
+> smell**: if you are reaching for it, you are almost certainly about to touch the device.
+> No example in this repo needs it any more.
+
+| Function        | Description                                                     |
+|-----------------|-----------------------------------------------------------------|
+| `tuish_hosted`  | Predicate: am I a hosted child, or do I own this terminal?       |
 
 **2. Split setup from the event loop.**
 
@@ -227,6 +320,30 @@ policy instead of forking it. What a child quitting *means* is yours to decide; 
 not unmount it for you.
 
 `examples/cooperative.sh` is the whole thing in ~30 lines.
+
+### The caret
+
+There is one caret and there may be many widgets, so the caret belongs to whoever shows it
+last -- and a host paints its **focused** child last, on purpose. That is the whole
+negotiation, and it covers the shape too: `tuish_cursor_shape` *declares* what this
+context's caret looks like, and `tuish_cursor` re-asserts it every frame along with the
+caret's position and visibility. The focused child's declaration is therefore the last one
+in the frame, and the one the terminal is left holding.
+
+A widget that shows a caret and cares what it looks like declares a shape. One that does
+not, inherits — the same bargain the caret's *position* has always offered.
+
+This is why a shape must never be a one-shot escape sent at setup. A child is mounted from
+inside the host's event handler, and a deferred redraw **discards that handler's frame**
+(the redraw supersedes whatever the handler drew) — so an escape written there is thrown
+away, and nothing re-declares it. That is exactly how `examples/editor.sh` drew a thin bar
+in a terminal and a fat block on the website, from the same line of code.
+
+> **The same hole swallows device MODES.** `tuish_mouse_on`, `tuish_kitty_on` and friends
+> emitted from a child's setup are one-shot escapes too: written into a frame that may be
+> discarded, and never re-declared. The mode *variable* survives and then lies about what
+> the terminal was told. Until that is fixed generally, **device modes belong to the host** —
+> enable them once, in the host, not in a widget.
 
 ### Painting around live children
 

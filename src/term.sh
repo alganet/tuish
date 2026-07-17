@@ -165,6 +165,21 @@ tuish_cursor ()
 	then
 		_tuish_cursor_vrow=$1
 		_tuish_cursor_vcol=$2
+		# The shape goes out WITH the caret, and inside the clip test: a caret placed
+		# outside its region shows nothing, so it should leave no shape behind either.
+		#
+		# ...but only when the device does not already have it. The saving is not the five
+		# bytes; it is that re-sending DECSCUSR re-arms a real terminal's blink phase every
+		# frame, and re-fires xterm.js's option change over the page's own settings. The
+		# cache is what the DEVICE was last told — and event.sh forgets it wherever it
+		# throws frame content away, so it can never claim bytes that never landed.
+		if test -n "$_tuish_cursor_shape" \
+		   && test "$_tuish_cursor_shape" != "$_tuish_cursor_shape_dev"
+		then
+			_tuish_write "\033[${_tuish_cursor_shape} q"
+			_tuish_cursor_shape_dev=$_tuish_cursor_shape
+			_tuish_cursor_shape_set=1
+		fi
 		tuish_show_cursor
 	fi
 }
@@ -282,8 +297,44 @@ tuish_style_seq ()
 	TUISH_SEQ="${_tuish_chr_27}[${_s_seq}m"
 }
 
-# Cursor shape (DECSCUSR): 0=default 1=blink-block 2=block 3=blink-underline 4=underline 5=blink-bar 6=bar
-tuish_cursor_shape ()   { _tuish_write "\033[${1} q"; }
+# ─── The caret's shape ───────────────────────────────────────────
+# DECSCUSR: 1=blink-block 2=block 3=blink-underline 4=underline 5=blink-bar 6=bar.
+#
+# It DECLARES; it does not write. The caret's position and visibility have always been
+# re-declared every frame — event.sh hides the caret before each deferred render, and a
+# render that wants one calls tuish_cursor, which places it and shows it again. The shape
+# was the odd one out: a single escape, written once, at setup.
+#
+# Which works standalone, and is silently thrown away when hosted. A child is MOUNTED from
+# inside the host's event handler, and the rAF path discards that handler's frame content
+# when a deferred redraw supersedes it — so the editor's `ESC[6 q` died in a buffer that was
+# never written, the render put the caret back without saying what it looked like, and the
+# terminal kept what it had. A thin bar in your terminal, a fat block on the website, from
+# the same line of code.
+#
+# So it is state, held per context, and it RIDES WITH THE CARET (see tuish_cursor). Being a
+# variable, it survives the discard; being re-asserted every frame, it survives everything
+# else. And the negotiation between children falls out for free: the one that shows the
+# caret last decides its shape — and a host paints its FOCUSED child last, deliberately, for
+# exactly this reason (tuish_host_paint).
+#
+# 0, or nothing, means NO OPINION: emit no DECSCUSR at all and inherit whatever the device
+# has. It does NOT mean "send DECSCUSR 0" — that escape leaves this codebase from one place
+# only, the device teardown in tuish_fini, where "put the terminal back" is what it means.
+# (On xterm.js it does not even mean that: 0 is read as 1, a BLINKING BLOCK.)
+#
+# A widget that shows a caret and cares what it looks like declares a shape. One that does
+# not, inherits — the same bargain the caret's position has always offered.
+tuish_ctx_register _tuish_cursor_shape
+
+tuish_cursor_shape ()   # [$1 = 1..6, or 0/nothing for no opinion]
+{
+	case "${1:-}" in
+		[1-6]) _tuish_cursor_shape=$1;;
+		*)     _tuish_cursor_shape='';;
+	esac
+	return 0
+}
 
 # Relative cursor movement (default: 1 cell)
 tuish_move_up ()        { _tuish_write "\033[${1:-1}A"; }

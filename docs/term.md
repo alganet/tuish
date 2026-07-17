@@ -36,19 +36,33 @@ child gets its region's left edge as logical column 1
 
 ## Cursor Shape
 
-| Function               | Description                 |
-|------------------------|-----------------------------|
-| `tuish_cursor_shape N` | Set cursor shape (DECSCUSR) |
+| Function               | Description                                                     |
+|------------------------|-----------------------------------------------------------------|
+| `tuish_cursor_shape N` | **Declare** this context's caret shape (DECSCUSR). Writes nothing |
 
-| N | Shape              |
-|---|--------------------|
-| 0 | Terminal default   |
-| 1 | Blinking block     |
-| 2 | Steady block       |
-| 3 | Blinking underline |
-| 4 | Steady underline   |
-| 5 | Blinking bar       |
-| 6 | Steady bar         |
+| N            | Shape              |
+|--------------|--------------------|
+| `0` (or none)| No opinion         |
+| 1            | Blinking block     |
+| 2            | Steady block       |
+| 3            | Blinking underline |
+| 4            | Steady underline   |
+| 5            | Blinking bar       |
+| 6            | Steady bar         |
+
+Three things to know, because the shape does not behave like an escape you send:
+
+- **It declares; it does not write.** The shape is part of the caret, like its position and
+  its visibility, and like them it is re-declared every frame. `tuish_cursor` emits it.
+- **No caret, no shape.** A context that never shows a caret never sends a DECSCUSR, so it
+  cannot change the shape under an app that did.
+- **`0` means *no opinion*, not "send DECSCUSR 0".** You inherit whatever the device has.
+  The only DECSCUSR 0 this toolkit sends is at device teardown, restoring the terminal for
+  the reader — and only if an app actually changed the shape.
+
+Declare a shape in your setup and forget about it. It survives being hosted, being scrolled
+off screen and back, and sharing a terminal with other widgets: see
+[hosting.md](hosting.md#the-caret).
 
 ## Output
 

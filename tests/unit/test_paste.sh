@@ -131,6 +131,13 @@ assert_eq "$TUISH_EVENT" "paste-end" "compat: paste-end still resolves"
 # --- Clipboard out: base64 + OSC 52 (src/clip.sh) ----------------------------
 . "$TESTS_DIR/../src/clip.sh"
 
+
+# Exercise the SHIPPED configuration. tuish_fnfix normally fires from tuish_init, which unit
+# tests deliberately never call (they stub the device) — so without this, every suite here
+# would validate the framework with its ksh `local` still leaking, i.e. not the library that
+# actually runs. It is a no-op on every shell whose `local` already works.
+command -v tuish_fnfix >/dev/null 2>&1 && tuish_fnfix
+
 # RFC 4648 test vectors — every padding case.
 tuish_b64 "";       assert_eq "$TUISH_B64" ""         "b64: empty"
 tuish_b64 "f";      assert_eq "$TUISH_B64" "Zg=="     "b64: 1 byte  (two pad)"

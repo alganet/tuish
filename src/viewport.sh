@@ -301,6 +301,40 @@ _tuish_viewport_clear_range ()
 	return 0
 }
 
+# ─── The device owner's region ───────────────────────────────────
+# The root is seated too. Its region is the WHOLE TERMINAL — not its viewport.
+#
+# That distinction is the whole point. A child's region and viewport are the same
+# rectangle, because a host hands it exactly one. The root's are not: it owns the screen,
+# and its viewport is whatever band it asked for inside it. Seating the root by its
+# viewport would be catastrophic for `grow`, whose TUISH_VIEW_ROWS is 0 until the first
+# line is emitted — the clip would refuse every cell and the app would render nothing.
+#
+# So the region is the screen, and the base clip is the screen expressed in the root's own
+# logical cells (the inverse of the tuish_vmove map: logical = absolute - VIEW_TOP + 1).
+# It is deliberately INDEPENDENT of TUISH_VIEW_ROWS, which is why grow is safe.
+#
+# This reproduces what the root effectively did before — tuish_vmove already refused
+# anything below the last screen row — and additionally refuses three ranges it used to
+# wave through, emitting malformed escapes for them: rows above 1 (`ESC[0;1H`,
+# `ESC[-1;1H`) and columns outside 1..COLUMNS (`ESC[1;0H`, `ESC[1;200H`). Same pixels,
+# fewer bytes, and a root that can no longer scribble outside the screen.
+#
+# Call it wherever the device owner's VIEW_TOP or the terminal size settles.
+_tuish_viewport_own_region ()
+{
+	test "${_tuish_owns_dev:-1}" -eq 1 || return 0
+	local _lrmin=$(( 2 - TUISH_VIEW_TOP ))                 # absolute row 1
+	local _lrmax=$(( TUISH_LINES - TUISH_VIEW_TOP + 1 ))   # absolute row TUISH_LINES
+	_tuish_ctx_region 1 0 "$TUISH_COLUMNS" "$TUISH_LINES" \
+		"$_lrmin" "$_lrmax" 1 "$TUISH_COLUMNS"
+	# _tuish_ctx_region clears the flag — it is the hosted path's primitive, and being
+	# seated normally means a host seated you. The root seats ITSELF, and still owns the
+	# terminal. Put it back.
+	_tuish_owns_dev=1
+	return 0
+}
+
 _tuish_viewport_on_resize ()
 {
 	# Hosted: our region is owned by the host, not the terminal. A terminal resize
@@ -310,7 +344,7 @@ _tuish_viewport_on_resize ()
 	# cursor query, the scroll region) that belongs to the host, not a sub-region.
 	# So re-apply our current region bounds — mirroring tuish_viewport's hosted
 	# branch — and return, touching neither the device nor the full-screen math.
-	if test "${_tuish_hosted:-0}" -eq 1
+	if test "${_tuish_owns_dev:-1}" -eq 0
 	then
 		TUISH_VIEW_TOP=$_tuish_rgn_top
 		TUISH_VIEW_LEFT=$_tuish_rgn_left
@@ -358,6 +392,10 @@ _tuish_viewport_on_resize ()
 		_tuish_viewport_repair $_tuish_relayout_rf $_tuish_relayout_rt
 		tuish_scroll_region $_tuish_relayout_sr_top $_tuish_relayout_sr_bot
 	fi
+
+	# The screen changed size and the relayout may have moved VIEW_TOP, so our region and
+	# its clip are both stale. Re-seat.
+	_tuish_viewport_own_region
 }
 
 # ─── Viewport modes ──────────────────────────────────────────────
@@ -373,7 +411,7 @@ tuish_viewport ()
 	# every mode maps to "fill my region"; no alt-screen, no scroll region, clear
 	# only the region. This is what makes a full-screen example run unchanged
 	# inside a host's content pane.
-	if test "${_tuish_hosted:-0}" -eq 1
+	if test "${_tuish_owns_dev:-1}" -eq 0
 	then
 		_tuish_view_mode="$_new_mode"
 		_tuish_view_max=$_new_max
@@ -497,6 +535,10 @@ tuish_viewport ()
 			;;
 	esac
 
+	# The mode just decided where our viewport sits. The region is still the whole screen,
+	# but its clip is expressed relative to VIEW_TOP, which has moved — so re-seat.
+	_tuish_viewport_own_region
+
 	_tuish_buffering=$_vp_was_buffering
 }
 
@@ -523,6 +565,10 @@ tuish_grow ()
 		TUISH_VIEW_ROWS=$((_tuish_grow_bot - _tuish_view_origin))
 		tuish_scroll_region $((_tuish_view_origin + 1)) $_tuish_grow_bot
 		tuish_move $_tuish_grow_bot 1
+		# Phase 0 -> 1 pins the block and moves VIEW_TOP down a row. The clip is relative
+		# to VIEW_TOP, so it is now off by one until we re-seat. (Phase 0 itself does not
+		# need this: it only grows VIEW_ROWS, which the region deliberately ignores.)
+		_tuish_viewport_own_region
 	fi
 
 	# Phase 1: scrolling
@@ -537,7 +583,7 @@ _tuish_on_fini ()
 	# touched the alt-screen, scroll region, or terminal scrollback. So teardown is
 	# just clearing the region (the host repaints over us on resume). No push-gap,
 	# no scroll reset, no cursor games — those are all screen-owning operations.
-	if test "${_tuish_hosted:-0}" -eq 1
+	if test "${_tuish_owns_dev:-1}" -eq 0
 	then
 		if test -n "$_tuish_view_mode"
 		then

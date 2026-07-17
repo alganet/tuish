@@ -22,6 +22,13 @@ tuish_on_event () { :; }
 
 . "$TESTS_DIR/../src/draw.sh"
 
+
+# Exercise the SHIPPED configuration. tuish_fnfix normally fires from tuish_init, which unit
+# tests deliberately never call (they stub the device) — so without this, every suite here
+# would validate the framework with its ksh `local` still leaking, i.e. not the library that
+# actually runs. It is a no-op on every shell whose `local` already works.
+command -v tuish_fnfix >/dev/null 2>&1 && tuish_fnfix
+
 printf 'Unit tests: draw.sh\n'
 
 # ─── Backend detection ────────────────────────────────────────────

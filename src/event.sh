@@ -163,7 +163,7 @@ _tuish_parse_event ()
 	# keeps the one loop and routes by region, forwarding only what falls inside —
 	# so an outside click simply never reaches the child, and self-quitting here
 	# would be a spurious quit the host would read as "the app ended".
-	if test "${_tuish_hosted:-0}" -eq 1 && test "${_tuish_driven:-0}" -ne 1 \
+	if test "${_tuish_owns_dev:-1}" -eq 0 && test "${_tuish_driven:-0}" -ne 1 \
 	   && test "$TUISH_EVENT_KIND" = 'mouse'
 	then
 		case "$TUISH_EVENT" in
@@ -204,21 +204,47 @@ _tuish_parse_event ()
 	# deferred redraw) the render's, closed once at the end. Frames nest, so a handler
 	# that opens its own no longer resets ours.
 	#
-	# _base heals an UNBALANCED handler. A depth counter is unforgiving where the old
-	# boolean self-healed: one stray tuish_begin would wedge the loop into never
+	# _tuish_pe_base heals an UNBALANCED handler. A depth counter is unforgiving where the
+	# old boolean self-healed: one stray tuish_begin would wedge the loop into never
 	# flushing again — a permanently frozen screen. Restoring the depth we entered at
 	# turns that into a lost frame instead of a dead app.
+	#
+	# The ugly name is load-bearing, and it is NOT free to shorten to `_base`.
+	#
+	# On ksh93, `local` is an alias for `typeset` (compat.sh), and typeset does NOT create
+	# a local in a POSIX `f () { ... }` function — only in a ksh-style `function f { ... }`
+	# one. Every function in this toolkit is POSIX-style, so on ksh93 EVERY `local` here is
+	# really a global. That is survivable exactly as long as the names cannot collide with
+	# a caller's, which is what the prefix buys.
+	#
+	# It is not hypothetical: this variable was called `_base`, and it silently overwrote
+	# the `_base` loop variable of the caller that drives us — turning `E 91 49 59 50 65`
+	# into `E 91 1 59 50 65` on the second iteration and taking 176 modifier tests down
+	# with it. A framework local is a framework global on one of our five shells. Name it
+	# like one.
 	tuish_begin
-	local _base=$_tuish_buffering
+	local _tuish_pe_base=$_tuish_buffering
 	TUISH_HANDLED=0
 	"${_tuish_event_fn:-tuish_on_event}"
-	_tuish_buffering=$_base
+	_tuish_buffering=$_tuish_pe_base
 
 	if test $_tuish_redraw_requested -eq 1
 	then
 		# rAF mode: a deferred redraw supersedes whatever the handler drew. Discard the
 		# CONTENT, not the frame — the frame is still ours and still open.
 		_tuish_buf=''
+		# Those bytes never reached the terminal, so nothing may go on believing they did.
+		# The caret-shape cache is the one record of "what the device has" that a discarded
+		# frame can falsify: a widget MOUNTED inside this handler — which is how every host
+		# mounts anything — wrote its DECSCUSR into the buffer we just threw away. Forget
+		# it; the render below re-asserts the shape from the context's declaration, which is
+		# a variable and was never in here to lose.
+		#
+		# The same hole swallows any other one-shot device escape a child emits while being
+		# mounted (tuish_mouse_on in its setup, say) — those are not re-declared per frame,
+		# so they are simply gone, and only the host's own device setup covers for them. A
+		# child should not be setting device modes; see docs/hosting.md.
+		_tuish_cursor_shape_dev=''
 		if test "${_tuish_raf_inhibit:-0}" -eq 1 || tuish_has_pending_input
 		then
 			# More input in flight — leave the redraw pending. When
@@ -239,7 +265,7 @@ _tuish_parse_event ()
 			tuish_hide_cursor
 			_tuish_cursor_vrow=0
 			"${_tuish_render_fn:-tuish_on_redraw}" "$_level"
-			_tuish_buffering=$_base
+			_tuish_buffering=$_tuish_pe_base
 		fi
 	fi
 	tuish_end
@@ -422,14 +448,14 @@ tuish_run ()
 
 		if test -n "${_tuish_signal:-}"
 		then
-			local _sig="$_tuish_signal"
+			local _tuish_r_sig="$_tuish_signal"
 			_tuish_signal=''
 			# If read timed out / failed, no byte to process:
 			# nothing is in flight, so the rAF peek is safe and
 			# signal redraws render immediately
 			if test "${_tuish_noinput:-no}" = "yes"
 			then
-				_tuish_parse_event "S $_sig"
+				_tuish_parse_event "S $_tuish_r_sig"
 				_tuish_noinput=no
 				continue
 			fi
@@ -437,11 +463,11 @@ tuish_run ()
 			# its sequence body is still unread — inhibit the rAF
 			# peek so it can't eat those bytes. The pending redraw
 			# fires when the companion byte's own events dispatch.
-			local _sig_byte="$_tuish_byte"
+			local _tuish_r_sigbyte="$_tuish_byte"
 			_tuish_raf_inhibit=1
-			_tuish_parse_event "S $_sig"
+			_tuish_parse_event "S $_tuish_r_sig"
 			_tuish_raf_inhibit=0
-			_tuish_byte="$_sig_byte"
+			_tuish_byte="$_tuish_r_sigbyte"
 			# Fall through to process the companion byte
 		elif test "${_tuish_noinput:-no}" = "yes"
 		then
@@ -454,35 +480,35 @@ tuish_run ()
 
 		if test "$_tuish_code" -eq 27
 		then
-			local _esc=''
+			local _tuish_r_esc=''
 			while _tuish_get_byte "$_tuish_esc_timeout"
 			do
-				if test "$_esc" = '91' &&
+				if test "$_tuish_r_esc" = '91' &&
 					test "${_tuish_byte}" = '<'
 				then
-					_esc='M '
+					_tuish_r_esc='M '
 					while _tuish_get_byte
 					do
 						if test "${_tuish_byte}" = ';'
 						then
-							_esc="${_esc} "
+							_tuish_r_esc="${_tuish_r_esc} "
 							continue
 						elif test "${_tuish_byte}" = 'm'
 						then
 							# SGR release: use class 'm'
-							_esc="m${_esc#M}"
+							_tuish_r_esc="m${_tuish_r_esc#M}"
 							break
 						elif test "${_tuish_byte}" = 'M'
 						then
 							break
 						else
-							_esc="${_esc}${_tuish_byte}"
+							_tuish_r_esc="${_tuish_r_esc}${_tuish_byte}"
 							continue
 						fi
 					done
-					_tuish_parse_event "${_esc}"
+					_tuish_parse_event "${_tuish_r_esc}"
 					continue 2
-				elif test "$_esc" = '91' && test "${_tuish_byte}" = 'M'
+				elif test "$_tuish_r_esc" = '91' && test "${_tuish_byte}" = 'M'
 				then
 					# X10 mouse (ESC [ M cb cx cy): the fallback for a terminal
 					# without SGR-mouse (1006). The three bytes are button/x/y, each
@@ -492,39 +518,39 @@ tuish_run ()
 					# same button encoding SGR sends, so it resolves via the same
 					# M-class path. Reads are esc-timeout-bounded so a truncated
 					# report can't hang the loop.
-					local _x10n=0 _x10b='' _x10x='' _x10y=''
-					while test $_x10n -lt 3
+					local _tuish_r_x10n=0 _tuish_r_x10b='' _tuish_r_x10x='' _tuish_r_x10y=''
+					while test $_tuish_r_x10n -lt 3
 					do
 						_tuish_get_byte "$_tuish_esc_timeout" || break
 						_tuish_ord "${_tuish_byte}"
-						case $_x10n in
-							0) _x10b=$((_tuish_code - 32));;
-							1) _x10x=$((_tuish_code - 32));;
-							2) _x10y=$((_tuish_code - 32));;
+						case $_tuish_r_x10n in
+							0) _tuish_r_x10b=$((_tuish_code - 32));;
+							1) _tuish_r_x10x=$((_tuish_code - 32));;
+							2) _tuish_r_x10y=$((_tuish_code - 32));;
 						esac
-						_x10n=$((_x10n + 1))
+						_tuish_r_x10n=$((_tuish_r_x10n + 1))
 					done
-					test $_x10n -eq 3 && \
-						_tuish_parse_event "M ${_x10b} ${_x10x} ${_x10y}"
+					test $_tuish_r_x10n -eq 3 && \
+						_tuish_parse_event "M ${_tuish_r_x10b} ${_tuish_r_x10x} ${_tuish_r_x10y}"
 					continue 2
 				elif
-					test "$_esc" = '' &&
+					test "$_tuish_r_esc" = '' &&
 					test "$_tuish_byte" = "["
 				then
-					_esc="91"
+					_tuish_r_esc="91"
 					continue
 				elif
-					test "$_esc" = '' &&
+					test "$_tuish_r_esc" = '' &&
 					test "$_tuish_byte" = "O"
 				then
 					# SS3 introducer (ESC O): the next byte is the final. Mark the
 					# state so the final-byte check below doesn't fire on the 'O'.
-					_esc=" 79"
+					_tuish_r_esc=" 79"
 					continue
-				elif test "${_tuish_byte}" = 'u' && test "${_esc}" != "${_esc#91}"
+				elif test "${_tuish_byte}" = 'u' && test "${_tuish_r_esc}" != "${_tuish_r_esc#91}"
 				then
 					# CSI u (kitty keyboard protocol)
-					_tuish_kitty_decode "${_esc#91 }"
+					_tuish_kitty_decode "${_tuish_r_esc#91 }"
 					_tuish_parse_event "K ${_tuish_ku_str}"
 					continue 2
 				fi
@@ -533,32 +559,32 @@ tuish_run ()
 
 				if test "$_tuish_code" -eq 27
 				then
-					if test -n "$_esc"
+					if test -n "$_tuish_r_esc"
 					then
 						# Inhibit rAF input-peek: the inner loop still needs to read
 						# the bytes that follow this ESC (next sequence's O, C, etc.).
 						# The rAF check defers the redraw instead of peeking; the
 						# burst-final sequence (timeout path below) fires it.
 						_tuish_raf_inhibit=1
-						_tuish_esc_emit "$_esc"
+						_tuish_esc_emit "$_tuish_r_esc"
 						_tuish_raf_inhibit=0
 					fi
-					_esc=''
+					_tuish_r_esc=''
 					continue
 				elif test "$_tuish_code" -lt 32
 				then
-					if test -z "$_esc"
+					if test -z "$_tuish_r_esc"
 					then
 						_tuish_parse_event "E 27 ${_tuish_code}"
 						continue 2
 					fi
-					_tuish_esc_emit "$_esc"
-					_esc=''
+					_tuish_esc_emit "$_tuish_r_esc"
+					_tuish_r_esc=''
 					_tuish_dump_code
 					continue 2
 				fi
 
-				_esc="${_esc} ${_tuish_code}"
+				_tuish_r_esc="${_tuish_r_esc} ${_tuish_code}"
 
 				# A CSI/SS3 final byte (0x40-0x7E) ends the sequence: dispatch now
 				# instead of waiting out _tuish_esc_timeout for a continuation that
@@ -570,7 +596,7 @@ tuish_run ()
 				# autorepeat from starving idle events.
 				if test "$_tuish_code" -ge 64 && test "$_tuish_code" -le 126
 				then
-					case "${_esc}" in
+					case "${_tuish_r_esc}" in
 						# ESC[200~ — a bracketed paste opens. Capture the BODY here,
 						# before emitting anything: the pasted bytes are text, not
 						# keystrokes, and _tuish_parse_event's rAF input-peek would
@@ -585,11 +611,11 @@ tuish_run ()
 							_tuish_parse_event "P"
 							_tuish_parse_event "E 91 50 48 49 126"
 							continue 2;;
-						91*|' 79'*) _tuish_parse_event "E ${_esc}"; continue 2;;
+						91*|' 79'*) _tuish_parse_event "E ${_tuish_r_esc}"; continue 2;;
 					esac
 				fi
 			done
-			_tuish_esc_emit "$_esc"
+			_tuish_esc_emit "$_tuish_r_esc"
 			continue
 		fi
 
