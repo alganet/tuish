@@ -162,6 +162,7 @@ only what your app needs.
 | `str.sh`      | string/Unicode width utilities                      | `ord.sh`              |
 | `buf.sh`      | line buffer                                         | --                    |
 | `keybind.sh`  | key binding dispatch                                | `ord.sh`              |
+| `clip.sh`     | system clipboard (OSC 52), base64                   | `tui.sh`, `ord.sh`    |
 | `draw.sh`     | box drawing                                         | `term.sh`, `str.sh`   |
 
 Modules that own per-app state (`draw.sh`, `hid.sh`, `viewport.sh`, `event.sh`,

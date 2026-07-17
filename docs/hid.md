@@ -366,10 +366,33 @@ These arrive as escape sequences but are categorized as `focus` kind, not `key`.
 
 | Event name    | Sequence    | Description           |
 |---------------|-------------|-----------------------|
+| `paste`       | (the body)  | **The pasted text, in `TUISH_PASTE`** |
 | `paste-start` | ESC [ 200 ~ | Bracketed paste begin |
 | `paste-end`   | ESC [ 201 ~ | Bracketed paste end   |
 
-These arrive as escape sequences but are categorized as `paste` kind, not `key`.
+These are categorized as `paste` kind, not `key`.
+
+A paste fires **three** events: `paste-start`, then a single `paste` carrying the whole
+body, then `paste-end`. Bind `paste` and read `TUISH_PASTE`:
+
+```sh
+_on_paste () { _insert_text "$TUISH_PASTE"; }
+tuish_bind 'paste' '_on_paste'
+```
+
+The body is **not** delivered as keystrokes. This matters: the bytes between the two
+markers are *text*, not input. Were they fed to the key decoder, a pasted newline would
+fire your `enter` binding, a pasted tab your `tab` binding (indenting, or expanding to
+spaces), and every character would force its own render — which is quadratic. tuish
+consumes the body itself and hands it over in one piece, so a paste is one atomic edit.
+
+`TUISH_PASTE` holds the text with line breaks normalized to `\n` (terminals send CR, or
+CRLF, inside a paste). It is capped at `TUISH_PASTE_MAX` bytes (default 256 KiB); a
+larger paste is truncated rather than allowed to run away.
+
+The `paste-start` / `paste-end` markers still fire, for apps that only want to know a
+paste is in progress. Note there is no reliable way to *initiate* a paste from the app —
+see [clip.md](clip.md#copy-out-paste-in).
 
 ---
 
