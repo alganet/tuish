@@ -140,6 +140,41 @@ is unmounted. A cooperative host reconciles differing rates with
 `tuish_ctx_sync_interval` and `tuish_ctx_tick`; see
 [hosting.md](hosting.md#idle-tick-negotiation).
 
+### An idle tick is a timeout, not a timer
+
+This is the one thing to understand about the clock, because everything real-time rests
+on it and it is not what the name suggests.
+
+An `idle` event is the reader's `read -t<interval>` **timing out**. Nothing schedules it.
+So while a key is held, an idle fires only if your interval is **shorter than the
+terminal's autorepeat interval** -- above it, a byte is always waiting before the timeout
+can land, the read never times out, and the tick stops for as long as the key is down.
+
+The margin is thinner than it looks. A 20ms interval against a typical ~33ms autorepeat
+survives on 13ms of slack, and `xset r rate 250 50` erases it outright.
+
+The framework will not let the clock **stop**: when events keep arriving with no timeout
+between them, `tuish_run` injects the tick the reader is not delivering. Healthy
+interleaving (`idle, byte, idle, byte`) never triggers it, so a well-fed loop is exactly
+what it always was.
+
+| Variable           | Default | Description                                                     |
+|--------------------|---------|-----------------------------------------------------------------|
+| `TUISH_BURST_MAX`  | `2`     | Events with no read timeout before a tick is injected (launcher config) |
+
+What that buys is **liveness, not fidelity**. Under starvation the tick fires per-N-events
+rather than per-wall-ms, so time dilates -- fast where the interval is coarse, slow where
+the autorepeat is. It never stops, which is what it did before. True fidelity needs a wall
+clock, and reading one costs a fork per tick on the shells tui.sh targets; the accumulator
+stays the clock, and this bounds how wrong it gets.
+
+**So a real-time app should still pick an interval below the autorepeat interval** (the
+platformer's `0.02` is the working example). The guarantee is a floor, not a substitute.
+
+A corollary worth stating, because a demo claimed otherwise: "the app plays the same at any
+`TUISH_IDLE_TIMEOUT`" holds for anything the tick integrates (gravity, animation), and does
+**not** hold for anything driven by a held key.
+
 ## Terminal Setup
 
 tui.sh configures the terminal at startup and restores it on exit:

@@ -37,6 +37,106 @@ and the kitty protocol omits the event-types flag for less terminal traffic.
 When modkeys is off, physical modifier key events (e.g. `shift.l`, `ctrl.r`)
 are dropped.
 
+## Held Keys
+
+A plain VT never reports a key **release**. Hold a key down and the terminal simply
+repeats the same event at the OS autorepeat rate — so "is A down right now?" has no
+direct answer, and a real-time app has to infer it from **recency**: a repeat arrived
+a moment ago, so the key is still down; nothing for a while, so it was let go.
+
+The framework keeps that inference for you. **No kitty required** — this is plain VT.
+
+| Function                  | Description                                                        |
+|---------------------------|--------------------------------------------------------------------|
+| `tuish_key_track KEY...`  | Declare the keys this context tracks. **Replaces** the set          |
+| `tuish_key_down KEY...`   | Predicate: is **any** of them down? (returns 0 = yes)              |
+| `tuish_key_ttl SECS`      | How long a repeat keeps a key "down" (default `0.15`)              |
+
+| Variable           | Description                                                       |
+|--------------------|-------------------------------------------------------------------|
+| `TUISH_KEY_REPEAT` | On a `key` event: `1` if it is a repeat of a key already down, `0` if it is a fresh press |
+
+```sh
+_app_setup ()
+{
+    tuish_init
+    tuish_key_track 'left' 'char a' 'right' 'char d'   # after init: it is per-context
+    tuish_key_ttl 0.15
+}
+
+_jump ()
+{
+    # A running jump, or a standing one?
+    if tuish_key_down 'left' 'char a' 'right' 'char d'
+    then _carry_momentum; else _straight_up; fi
+}
+```
+
+`tuish_key_down` takes several keys and ORs them, because aliasing is the normal case:
+`left` and `char a` are one action and deserve one question. It answers with an **exit
+status**, which costs no fork — the same bargain as `tuish_hosted`.
+
+Call `tuish_key_track` **after `tuish_init`**, next to your binds: the tracked set is a
+context field, so a hosted child gets its own, and two mounts of one app never share a
+keyboard.
+
+### Press vs. repeat
+
+`TUISH_KEY_REPEAT` is the press/repeat distinction the kitty protocol reports natively
+and VT does not — synthesized from the window already being kept. It is what makes an app
+**edge-triggerable**:
+
+```sh
+_walk ()
+{
+    _face=$1
+    test "$TUISH_KEY_REPEAT" -eq 1 && return 0   # repeats do nothing...
+    _step_one_tile "$1"                          # ...only a fresh press steps
+}
+```
+
+You cannot derive this from `tuish_key_down` yourself. The window is refilled **before**
+your binding runs — deliberately, so a handler can ask about the very key whose event is
+in flight — which means `tuish_key_down` says "down" either way by the time you look.
+
+### The three timescales
+
+The window has to land between two numbers you do not control:
+
+| | |
+|---|---|
+| autorepeat interval (~33ms) | the window must **exceed** this, or a held key looks released in the gaps between repeats |
+| **the window** (150ms) | |
+| initial repeat delay (~500ms) | the window must **fall short** of this, or a single tap is still "down" when the first repeat lands — and a tap becomes a hold |
+
+Miss on either side and it is not subtly wrong, it is the wrong feature. The default sits
+in the middle on purpose; `examples/game.sh` reached the same value by hand before this
+existed.
+
+That initial delay is inherent to VT: a held key gives you one event, then ~500ms of
+nothing, then a stream. An app that wants motion during that gap must decide for itself
+what a press means — the framework will not invent repeats that the terminal did not send.
+
+### What kitty adds
+
+Nothing you must have. With `tuish_detailed_on` the terminal sends real `-rep` and `-rel`
+events, and the same API uses them when they arrive: a release empties the window **at
+once** instead of waiting it out, and `TUISH_KEY_REPEAT` is read from the event rather than
+inferred. Same calls, same app code, better source where available.
+
+> Device modes belong to the host — see [hosting.md](hosting.md). Do not call
+> `tuish_detailed_on` from a widget to get this; the VT path is the supported one.
+
+### Decay rides your tick
+
+Windows are aged on the **idle tick**, by `TUISH_TICK_US`. This is the other reason the
+feature is not an app's to write: a hosted child is ticked at its *own* negotiated rate
+(see [hosting.md](hosting.md#idle-tick-negotiation)), and it cannot learn that rate without
+asking whether it is hosted — which is a smell. Driving the decay from the event path means
+a child gets it right for free.
+
+An app that tracks nothing pays one string comparison per event.
+
 ## Overflow Control
 
 Line wrapping (DECAWM) is **off by default** -- content past the right

@@ -24,9 +24,17 @@
 # taken only once 1/RUN_SPEED of game-time (TUISH_TICK_US, banked in _step_acc)
 # has elapsed, capping the held run at RUN_SPEED tiles/sec on every keyboard,
 # whatever its autorepeat rate. Dropped repeats are cheap (no move, no draw) so
-# the buffered byte stream drains at once and the idle tick is never starved —
-# gravity keeps ticking between steps, so you fall off a ledge the moment you run
-# off it instead of dashing the whole screen. Snappy, uniform, and dead-simple.
+# the buffered byte stream drains at once — gravity keeps ticking between steps,
+# so you fall off a ledge the moment you run off it instead of dashing the whole
+# screen. Snappy, uniform, and dead-simple.
+#
+# That throttle only works while the idle tick keeps firing, and the tick is a
+# read TIMEOUT, not a timer: hold a key whose autorepeat is faster than our
+# interval and the read never times out, no idle fires, _step_acc never refills,
+# and the player takes one step and stops until you let go. That is why the
+# interval below is 0.02 — comfortably under a ~33ms autorepeat. The library also
+# refuses to let the clock stop outright (see TUISH_BURST_MAX in docs/tui.md), but
+# that guarantee is a floor, not a reason to pick a lazy interval.
 #
 # GAME SPEED IS DECOUPLED FROM THE TICK RATE, using TUISH_IDLE_TIMEOUT itself as
 # the clock: each idle event means the input read timed out, i.e. ~one timeout
@@ -34,6 +42,9 @@
 # timeout while the number of ticks scales as 1/timeout, the game plays at the
 # same speed for any TUISH_IDLE_TIMEOUT — smaller just buys smoother motion and
 # snappier input (more CPU). Velocities below are in tiles-per-second.
+#
+# ...for anything the TICK integrates: gravity, jumps, enemies. NOT for a held
+# run, which is paced by autorepeat arriving against that same clock — see above.
 #
 # The world is a grid of TILES; each tile is TW terminal columns so an emoji
 # (drawn 2 cells wide) fills exactly one tile — the board stays aligned and
