@@ -24,6 +24,7 @@ then
 	. "${_tuish_src_dir}/viewport.sh"
 	. "${_tuish_src_dir}/str.sh"
 	. "${_tuish_src_dir}/buf.sh"
+	. "${_tuish_src_dir}/clip.sh"
 	. "${_tuish_src_dir}/keybind.sh"
 else
 	_ed_standalone=0
@@ -42,11 +43,26 @@ _sel_row=0       # 0 = no selection
 _sel_col=0
 _status_msg=''
 
+# The line buffer we edit. A NAME, not a literal, so a host can hand us a buffer it
+# already populated (a doc snippet) and read it back afterwards — see _ed_text.
+# Standalone this stays '_', the historical scratch buffer.
+_ed_buf='_'
+
+# The editor's own clipboard. Held here rather than read back from the system
+# clipboard because OSC 52 is write-only by design (see src/clip.sh): a terminal
+# will let us SET the clipboard but not read it, so an app that wants copy/paste
+# within itself must keep its own register. Copy mirrors OUT to the system
+# clipboard; paste comes IN via bracketed paste, which is a different path entirely.
+_ed_clip=''
+
+# Out-var for _ed_selected_text / _ed_text.
+_ed_sel_text=''
+
 # ─── Cursor helpers ─────────────────────────────────────────────────
 
 _clamp_col ()
 {
-	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_len _line
 	if test $_cur_col -gt $((TUISH_SLEN + 1))
 	then
@@ -58,7 +74,7 @@ _clamp_col ()
 # Display column (0-based) of the cursor: width of the line prefix before it.
 _compute_dcol ()
 {
-	tuish_buf_get _ $_cur_row
+	tuish_buf_get "$_ed_buf" $_cur_row
 	local _dc="$TUISH_BLINE"
 	tuish_str_left _dc $((_cur_col - 1))
 	local _dcp="$TUISH_SLEFT"
@@ -72,7 +88,7 @@ _col_to_char ()
 {
 	local _target=$1
 	test $_target -lt 0 && _target=0
-	tuish_buf_get _ $_cur_row
+	tuish_buf_get "$_ed_buf" $_cur_row
 	local _ctc="$TUISH_BLINE"
 	tuish_str_len _ctc
 	local _ctc_len=$TUISH_SLEN _ctc_i=0 _ctc_col=0 _ctc_ch
@@ -137,14 +153,14 @@ _start_sel ()
 
 _word_left ()
 {
-	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
 	if test $_cur_col -le 1
 	then
 		# Move to end of previous line
 		if test $_cur_row -gt 1
 		then
 			_cur_row=$((_cur_row - 1))
-			tuish_buf_get _ $_cur_row; _line="$TUISH_BLINE"
+			tuish_buf_get "$_ed_buf" $_cur_row; _line="$TUISH_BLINE"
 			tuish_str_len _line
 			_cur_col=$((TUISH_SLEN + 1))
 		fi
@@ -185,7 +201,7 @@ _word_left ()
 
 _word_right ()
 {
-	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_len _line
 	local _len=$TUISH_SLEN
 
@@ -238,6 +254,66 @@ _sel_bounds ()
 	fi
 }
 
+# The selected text -> _ed_sel_text (empty when there is no selection).
+# The selection machinery could previously only RENDER a selection or DELETE it —
+# nothing ever extracted the text, which is why the editor had no copy. Same bounds
+# and same edge cases as _delete_selection; kept adjacent so the two stay in step.
+_ed_selected_text ()
+{
+	_sel_bounds
+	_ed_sel_text=''
+	test $_sr1 -eq 0 && return 1
+
+	if test $_sr1 -eq $_sr2
+	then
+		# Same line: the slice between the two columns.
+		tuish_buf_get "$_ed_buf" $_sr1; local _line="$TUISH_BLINE"
+		tuish_str_right _line $((_sc1 - 1))
+		local _rest="$TUISH_SRIGHT"
+		tuish_str_left _rest $((_sc2 - _sc1))
+		_ed_sel_text="$TUISH_SLEFT"
+		return 0
+	fi
+
+	# Multi-line: tail of the first line, every line between, head of the last.
+	tuish_buf_get "$_ed_buf" $_sr1; local _first="$TUISH_BLINE"
+	tuish_str_right _first $((_sc1 - 1))
+	_ed_sel_text="$TUISH_SRIGHT"
+
+	local _i=$((_sr1 + 1))
+	while test $_i -lt $_sr2
+	do
+		tuish_buf_get "$_ed_buf" $_i
+		_ed_sel_text="${_ed_sel_text}${_tuish_chr_10}${TUISH_BLINE}"
+		_i=$((_i + 1))
+	done
+
+	tuish_buf_get "$_ed_buf" $_sr2; local _last="$TUISH_BLINE"
+	tuish_str_left _last $((_sc2 - 1))
+	_ed_sel_text="${_ed_sel_text}${_tuish_chr_10}${TUISH_SLEFT}"
+	return 0
+}
+
+# The whole buffer as one newline-separated string -> _ed_sel_text. The editor had no
+# way to hand its contents anywhere; a host that seeds _ed_buf with a snippet needs
+# this to read the edit back.
+_ed_text ()
+{
+	_ed_sel_text=''
+	tuish_buf_count "$_ed_buf"
+	local _i=1 _n=$TUISH_BUF_COUNT
+	while test $_i -le $_n
+	do
+		tuish_buf_get "$_ed_buf" $_i
+		if test $_i -eq 1
+		then _ed_sel_text="$TUISH_BLINE"
+		else _ed_sel_text="${_ed_sel_text}${_tuish_chr_10}${TUISH_BLINE}"
+		fi
+		_i=$((_i + 1))
+	done
+	return 0
+}
+
 _delete_selection ()
 {
 	_sel_bounds
@@ -246,27 +322,27 @@ _delete_selection ()
 	if test $_sr1 -eq $_sr2
 	then
 		# Same line: delete columns
-		tuish_buf_get _ $_sr1; local _line="$TUISH_BLINE"
+		tuish_buf_get "$_ed_buf" $_sr1; local _line="$TUISH_BLINE"
 		tuish_str_left _line $((_sc1 - 1))
 		local _left="$TUISH_SLEFT"
 		tuish_str_right _line $((_sc2 - 1))
-		tuish_buf_set _ $_sr1 "${_left}${TUISH_SRIGHT}"
+		tuish_buf_set "$_ed_buf" $_sr1 "${_left}${TUISH_SRIGHT}"
 	else
 		# Multi-line: join first and last, delete middle
-		tuish_buf_get _ $_sr1; local _first="$TUISH_BLINE"
+		tuish_buf_get "$_ed_buf" $_sr1; local _first="$TUISH_BLINE"
 		tuish_str_left _first $((_sc1 - 1))
 		local _head="$TUISH_SLEFT"
 
-		tuish_buf_get _ $_sr2; local _last="$TUISH_BLINE"
+		tuish_buf_get "$_ed_buf" $_sr2; local _last="$TUISH_BLINE"
 		tuish_str_right _last $((_sc2 - 1))
 		local _tail="$TUISH_SRIGHT"
 
-		tuish_buf_set _ $_sr1 "${_head}${_tail}"
+		tuish_buf_set "$_ed_buf" $_sr1 "${_head}${_tail}"
 
 		local _d=$_sr2
 		while test $_d -gt $_sr1
 		do
-			tuish_buf_delete_at _ $((_sr1 + 1))
+			tuish_buf_delete_at "$_ed_buf" $((_sr1 + 1))
 			_d=$((_d - 1))
 		done
 	fi
@@ -281,6 +357,94 @@ _delete_selection ()
 # ─── Action functions (bound via tuish_bind) ─────────────────────
 
 _ed_quit ()      { tuish_quit_clear; }
+
+# ─── Clipboard ──────────────────────────────────────────────────────
+
+# Insert TEXT (which may contain newlines) at the cursor as ONE edit. This is the
+# whole point of the atomic `paste` event: the old path replayed a paste as a burst
+# of key events, so a pasted newline ran the `enter` BINDING and a pasted tab ran
+# `tab` (expanding to 4 spaces). Here the text is data, not input.
+_ed_insert_text ()   # $1 = text
+{
+	local _nl="$_tuish_chr_10"
+	test $_sel_row -ne 0 && _delete_selection
+	tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
+	tuish_str_left  _line $((_cur_col - 1)); local _left="$TUISH_SLEFT"
+	tuish_str_right _line $((_cur_col - 1)); local _right="$TUISH_SRIGHT"
+
+	# Walk the text a line at a time. The FIRST segment continues the current line
+	# (after _left); the LAST one is followed by _right; anything between becomes a
+	# whole new line.
+	local _t="$1" _seg _last='' _row=$_cur_row
+	while :
+	do
+		case "$_t" in
+			*"$_nl"*) _seg="${_t%%"$_nl"*}"; _t="${_t#*"$_nl"}";;
+			*)        _last="$_t"; break;;
+		esac
+		if test "$_row" -eq "$_cur_row"
+		then tuish_buf_set "$_ed_buf" "$_row" "${_left}${_seg}"
+		else tuish_buf_insert_at "$_ed_buf" "$_row" "$_seg"
+		fi
+		_row=$((_row + 1))
+	done
+
+	tuish_str_len _last
+	local _lw=$TUISH_SLEN
+	if test "$_row" -eq "$_cur_row"
+	then
+		# Single-line paste: the cursor just advances along the current line.
+		tuish_buf_set "$_ed_buf" "$_row" "${_left}${_last}${_right}"
+		_cur_col=$((_cur_col + _lw))
+	else
+		tuish_buf_insert_at "$_ed_buf" "$_row" "${_last}${_right}"
+		_cur_row=$_row
+		_cur_col=$((_lw + 1))
+	fi
+	_sel_row=0; _sel_col=0
+	_clamp_col
+	tuish_request_redraw
+}
+
+# Copy: keep the text in our own register AND mirror it to the system clipboard.
+# Both are needed — OSC 52 can only WRITE the system clipboard, never read it back
+# (see src/clip.sh), so in-editor paste has to come from the register.
+_ed_copy ()
+{
+	_ed_selected_text || { _status_msg='nothing selected'; return 0; }
+	_ed_clip="$_ed_sel_text"
+	type tuish_clip_set >/dev/null 2>&1 && tuish_clip_set "$_ed_clip"
+	_status_msg='copied'
+	tuish_request_redraw
+}
+
+_ed_cut ()
+{
+	_ed_selected_text || { _status_msg='nothing selected'; return 0; }
+	_ed_clip="$_ed_sel_text"
+	type tuish_clip_set >/dev/null 2>&1 && tuish_clip_set "$_ed_clip"
+	_delete_selection
+	_status_msg='cut'
+	tuish_request_redraw
+}
+
+_ed_paste ()
+{
+	test -n "$_ed_clip" || return 0
+	_ed_insert_text "$_ed_clip"
+	_status_msg='pasted'
+}
+
+# A paste from the TERMINAL (bracketed paste): the body arrives in TUISH_PASTE as one
+# event. Route it through the same atomic insert, and adopt it as our register so a
+# subsequent in-editor paste repeats it.
+_ed_on_paste ()
+{
+	test -n "${TUISH_PASTE:-}" || return 0
+	_ed_clip="$TUISH_PASTE"
+	_ed_insert_text "$TUISH_PASTE"
+	_status_msg='pasted'
+}
 
 _ed_toggle_fullscreen ()
 {
@@ -307,7 +471,7 @@ _ed_left ()
 	elif test $_cur_row -gt 1
 	then
 		_cur_row=$((_cur_row - 1))
-		tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+		tuish_buf_get "$_ed_buf" $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 		_cur_col=$((TUISH_SLEN + 1))
 	fi
 }
@@ -315,7 +479,7 @@ _ed_left ()
 _ed_right ()
 {
 	_clear_sel
-	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get "$_ed_buf" $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	if test $_cur_col -le $TUISH_SLEN
 	then
 		_cur_col=$((_cur_col + 1))
@@ -331,7 +495,7 @@ _ed_home ()      { _clear_sel; _cur_col=1; }
 _ed_end ()
 {
 	_clear_sel
-	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get "$_ed_buf" $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	_cur_col=$((TUISH_SLEN + 1))
 }
 
@@ -344,7 +508,7 @@ _ed_bottom ()
 {
 	_clear_sel
 	_cur_row=$TUISH_BUF_COUNT
-	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get "$_ed_buf" $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	_cur_col=$((TUISH_SLEN + 1))
 }
 
@@ -388,7 +552,7 @@ _ed_sel_left ()
 	elif test $_cur_row -gt 1
 	then
 		_cur_row=$((_cur_row - 1))
-		tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+		tuish_buf_get "$_ed_buf" $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 		_cur_col=$((TUISH_SLEN + 1))
 	fi
 	tuish_request_redraw
@@ -397,7 +561,7 @@ _ed_sel_left ()
 _ed_sel_right ()
 {
 	_start_sel
-	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get "$_ed_buf" $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	if test $_cur_col -le $TUISH_SLEN
 	then
 		_cur_col=$((_cur_col + 1))
@@ -413,7 +577,7 @@ _ed_sel_home ()  { _start_sel; _cur_col=1; tuish_request_redraw; }
 _ed_sel_end ()
 {
 	_start_sel
-	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get "$_ed_buf" $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	_cur_col=$((TUISH_SLEN + 1)); tuish_request_redraw
 }
 
@@ -424,7 +588,7 @@ _ed_sel_top ()        { _start_sel; _cur_row=1; _cur_col=1; tuish_request_redraw
 _ed_sel_bottom ()
 {
 	_start_sel; _cur_row=$TUISH_BUF_COUNT
-	tuish_buf_get _ $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
+	tuish_buf_get "$_ed_buf" $_cur_row; local _l="$TUISH_BLINE"; tuish_str_len _l
 	_cur_col=$((TUISH_SLEN + 1)); tuish_request_redraw
 }
 
@@ -483,11 +647,11 @@ _ed_insert_char ()
 	local _ch="${TUISH_EVENT#char }"
 	test "$_ch" = 'bslash' && _ch='\'
 	test $_sel_row -ne 0 && _delete_selection
-	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_left _line $((_cur_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_cur_col - 1))
-	tuish_buf_set _ $_cur_row "${_left}${_ch}${TUISH_SRIGHT}"
+	tuish_buf_set "$_ed_buf" $_cur_row "${_left}${_ch}${TUISH_SRIGHT}"
 	_cur_col=$((_cur_col + 1))
 	_ed_render_line_now
 	tuish_request_redraw 1
@@ -496,11 +660,11 @@ _ed_insert_char ()
 _ed_space ()
 {
 	test $_sel_row -ne 0 && _delete_selection
-	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_left _line $((_cur_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_cur_col - 1))
-	tuish_buf_set _ $_cur_row "${_left} ${TUISH_SRIGHT}"
+	tuish_buf_set "$_ed_buf" $_cur_row "${_left} ${TUISH_SRIGHT}"
 	_cur_col=$((_cur_col + 1))
 	_ed_render_line_now
 	tuish_request_redraw 1
@@ -509,11 +673,11 @@ _ed_space ()
 _ed_tab ()
 {
 	test $_sel_row -ne 0 && _delete_selection
-	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_left _line $((_cur_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_cur_col - 1))
-	tuish_buf_set _ $_cur_row "${_left}    ${TUISH_SRIGHT}"
+	tuish_buf_set "$_ed_buf" $_cur_row "${_left}    ${TUISH_SRIGHT}"
 	_cur_col=$((_cur_col + 4))
 	_ed_render_line_now
 	tuish_request_redraw 1
@@ -522,13 +686,13 @@ _ed_tab ()
 _ed_enter ()
 {
 	test $_sel_row -ne 0 && _delete_selection
-	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_left _line $((_cur_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_cur_col - 1))
 	local _right="$TUISH_SRIGHT"
-	tuish_buf_set _ $_cur_row "$_left"
-	tuish_buf_insert_at _ $((_cur_row + 1)) "$_right"
+	tuish_buf_set "$_ed_buf" $_cur_row "$_left"
+	tuish_buf_insert_at "$_ed_buf" $((_cur_row + 1)) "$_right"
 	_cur_row=$((_cur_row + 1))
 	_cur_col=1
 	tuish_request_redraw
@@ -541,23 +705,23 @@ _ed_bksp ()
 		_delete_selection
 	elif test $_cur_col -gt 1
 	then
-		tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
+		tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
 		tuish_str_left _line $((_cur_col - 2))
 		local _left="$TUISH_SLEFT"
 		tuish_str_right _line $((_cur_col - 1))
-		tuish_buf_set _ $_cur_row "${_left}${TUISH_SRIGHT}"
+		tuish_buf_set "$_ed_buf" $_cur_row "${_left}${TUISH_SRIGHT}"
 		_cur_col=$((_cur_col - 1))
 		_ed_render_line_now
 		tuish_request_redraw 1
 	elif test $_cur_row -gt 1
 	then
 		# Join with previous line
-		tuish_buf_get _ $((_cur_row - 1)); local _prev="$TUISH_BLINE"
-		tuish_buf_get _ $_cur_row; local _curr="$TUISH_BLINE"
+		tuish_buf_get "$_ed_buf" $((_cur_row - 1)); local _prev="$TUISH_BLINE"
+		tuish_buf_get "$_ed_buf" $_cur_row; local _curr="$TUISH_BLINE"
 		tuish_str_len _prev
 		local _newcol=$((TUISH_SLEN + 1))
-		tuish_buf_set _ $((_cur_row - 1)) "${_prev}${_curr}"
-		tuish_buf_delete_at _ $_cur_row
+		tuish_buf_set "$_ed_buf" $((_cur_row - 1)) "${_prev}${_curr}"
+		tuish_buf_delete_at "$_ed_buf" $_cur_row
 		_cur_row=$((_cur_row - 1))
 		_cur_col=$_newcol
 		tuish_request_redraw
@@ -570,22 +734,22 @@ _ed_del ()
 	then
 		_delete_selection
 	else
-		tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
+		tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
 		tuish_str_len _line
 		if test $_cur_col -le $TUISH_SLEN
 		then
 			tuish_str_left _line $((_cur_col - 1))
 			local _left="$TUISH_SLEFT"
 			tuish_str_right _line $_cur_col
-			tuish_buf_set _ $_cur_row "${_left}${TUISH_SRIGHT}"
+			tuish_buf_set "$_ed_buf" $_cur_row "${_left}${TUISH_SRIGHT}"
 			_ed_render_line_now
 			tuish_request_redraw 1
 		elif test $_cur_row -lt $TUISH_BUF_COUNT
 		then
 			# Join with next line
-			tuish_buf_get _ $((_cur_row + 1)); local _next="$TUISH_BLINE"
-			tuish_buf_set _ $_cur_row "${_line}${_next}"
-			tuish_buf_delete_at _ $((_cur_row + 1))
+			tuish_buf_get "$_ed_buf" $((_cur_row + 1)); local _next="$TUISH_BLINE"
+			tuish_buf_set "$_ed_buf" $_cur_row "${_line}${_next}"
+			tuish_buf_delete_at "$_ed_buf" $((_cur_row + 1))
 			tuish_request_redraw
 		fi
 	fi
@@ -603,12 +767,12 @@ _ed_del_word_left ()
 		# At start of line: join with previous (same as bksp)
 		if test $_cur_row -gt 1
 		then
-			tuish_buf_get _ $((_cur_row - 1)); local _prev="$TUISH_BLINE"
-			tuish_buf_get _ $_cur_row; local _curr="$TUISH_BLINE"
+			tuish_buf_get "$_ed_buf" $((_cur_row - 1)); local _prev="$TUISH_BLINE"
+			tuish_buf_get "$_ed_buf" $_cur_row; local _curr="$TUISH_BLINE"
 			tuish_str_len _prev
 			local _newcol=$((TUISH_SLEN + 1))
-			tuish_buf_set _ $((_cur_row - 1)) "${_prev}${_curr}"
-			tuish_buf_delete_at _ $_cur_row
+			tuish_buf_set "$_ed_buf" $((_cur_row - 1)) "${_prev}${_curr}"
+			tuish_buf_delete_at "$_ed_buf" $_cur_row
 			_cur_row=$((_cur_row - 1))
 			_cur_col=$_newcol
 			tuish_request_redraw
@@ -617,11 +781,11 @@ _ed_del_word_left ()
 	fi
 	local _old_col=$_cur_col
 	_word_left
-	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_left _line $((_cur_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_old_col - 1))
-	tuish_buf_set _ $_cur_row "${_left}${TUISH_SRIGHT}"
+	tuish_buf_set "$_ed_buf" $_cur_row "${_left}${TUISH_SRIGHT}"
 	_ed_render_line_now
 	tuish_request_redraw 1
 }
@@ -633,16 +797,16 @@ _ed_del_word_right ()
 		_delete_selection
 		return
 	fi
-	tuish_buf_get _ $_cur_row; local _line="$TUISH_BLINE"
+	tuish_buf_get "$_ed_buf" $_cur_row; local _line="$TUISH_BLINE"
 	tuish_str_len _line
 	if test $_cur_col -gt $TUISH_SLEN
 	then
 		# At end of line: join with next (same as del)
 		if test $_cur_row -lt $TUISH_BUF_COUNT
 		then
-			tuish_buf_get _ $((_cur_row + 1)); local _next="$TUISH_BLINE"
-			tuish_buf_set _ $_cur_row "${_line}${_next}"
-			tuish_buf_delete_at _ $((_cur_row + 1))
+			tuish_buf_get "$_ed_buf" $((_cur_row + 1)); local _next="$TUISH_BLINE"
+			tuish_buf_set "$_ed_buf" $_cur_row "${_line}${_next}"
+			tuish_buf_delete_at "$_ed_buf" $((_cur_row + 1))
 			tuish_request_redraw
 		fi
 		return
@@ -652,7 +816,7 @@ _ed_del_word_right ()
 	tuish_str_left _line $((_old_col - 1))
 	local _left="$TUISH_SLEFT"
 	tuish_str_right _line $((_cur_col - 1))
-	tuish_buf_set _ $_cur_row "${_left}${TUISH_SRIGHT}"
+	tuish_buf_set "$_ed_buf" $_cur_row "${_left}${TUISH_SRIGHT}"
 	_cur_col=$_old_col
 	_ed_render_line_now
 	tuish_request_redraw 1
@@ -719,7 +883,7 @@ _ed_render ()
 		then
 			if test $_lnum -le $TUISH_BUF_COUNT
 			then
-				tuish_buf_get _ $_lnum; _line="$TUISH_BLINE"
+				tuish_buf_get "$_ed_buf" $_lnum; _line="$TUISH_BLINE"
 
 				# Check if this line has selection
 				if test $_sr1 -ne 0 && test $_lnum -ge $_sr1 && test $_lnum -le $_sr2
@@ -876,7 +1040,7 @@ _render_line ()
 	tuish_vmove $_vrow 1
 	if test $_lnum -le $TUISH_BUF_COUNT
 	then
-		tuish_buf_get _ $_lnum; local _rl_line="$TUISH_BLINE"
+		tuish_buf_get "$_ed_buf" $_lnum; local _rl_line="$TUISH_BLINE"
 		_render_clipped_line "$_rl_line"
 	else
 		tuish_sgr '2'
@@ -891,6 +1055,19 @@ _ed_setup_bindings ()
 {
 	tuish_bind 'ctrl-w'          '_ed_quit'
 	tuish_bind 'alt-f'           '_ed_toggle_fullscreen'
+
+	# Clipboard. ctrl-c is free to mean Copy here: tuish_init runs the terminal with
+	# `stty -isig`, so ctrl-c never raises SIGINT — it arrives as a plain key event
+	# (and was unbound until now). `paste` is the atomic bracketed-paste event; the
+	# text is in TUISH_PASTE.
+	tuish_bind 'ctrl-c'          '_ed_copy'
+	tuish_bind 'ctrl-x'          '_ed_cut'
+	tuish_bind 'ctrl-v'          '_ed_paste'
+	tuish_bind 'paste'           '_ed_on_paste'
+	# Boundary markers: consumed so they cannot reach the catch-all. The body is
+	# delivered by the `paste` event above, not between these.
+	tuish_bind 'paste-start'     ':'
+	tuish_bind 'paste-end'       ':'
 
 	# Navigation
 	tuish_bind 'up'              '_ed_up'
@@ -1025,17 +1202,21 @@ _ed_setup ()
 	_view_height=$((TUISH_VIEW_ROWS - 1))
 	_view_width=$TUISH_VIEW_COLS   # region width when hosted; full width standalone
 
-	# Load file from argv or start with empty buffer
+	# Load a file from argv; otherwise keep whatever is in _ed_buf and start empty
+	# only if it is genuinely empty.
 	if test -n "${1:-}" && test -f "$1"
 	then
 		_status_msg="$1"
 		while IFS= read -r _fline || test -n "$_fline"
 		do
-			tuish_buf_append _ "$_fline"
+			tuish_buf_append "$_ed_buf" "$_fline"
 		done < "$1"
-		test $TUISH_BUF_COUNT -eq 0 && tuish_buf_append _ ''
+		test $TUISH_BUF_COUNT -eq 0 && tuish_buf_append "$_ed_buf" ''
 	else
-		tuish_buf_init _
+		# A HOST may have seeded _ed_buf before mounting us (a doc snippet to edit).
+		# Initializing unconditionally would wipe exactly what we were handed.
+		tuish_buf_count "$_ed_buf"
+		test "$TUISH_BUF_COUNT" -eq 0 && tuish_buf_init "$_ed_buf"
 	fi
 
 	_ed_render
