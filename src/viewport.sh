@@ -392,7 +392,7 @@ tuish_viewport ()
 	# Structural sequences must reach the terminal immediately;
 	# bypass event-loop buffering.
 	local _vp_was_buffering=$_tuish_buffering
-	test $_tuish_buffering -eq 1 && tuish_flush
+	test $_tuish_buffering -gt 0 && tuish_flush
 	_tuish_buffering=0
 
 	# Tear down previous mode

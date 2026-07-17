@@ -80,7 +80,7 @@ _tuish_sink ()
 
 _tuish_write ()
 {
-	if test $_tuish_buffering -eq 1
+	if test $_tuish_buffering -ge 1
 	then
 		_tuish_buf="${_tuish_buf}${1:-}"
 	else
@@ -88,9 +88,33 @@ _tuish_write ()
 	fi
 }
 
-tuish_begin ()          { _tuish_buffering=1; _tuish_buf=''; }
-tuish_end ()            { test -n "$_tuish_buf" && _tuish_sink "$_tuish_buf"; _tuish_buf=''; _tuish_buffering=0; }
-tuish_flush ()          { test -n "$_tuish_buf" && _tuish_sink "$_tuish_buf"; _tuish_buf=''; }
+# Frames NEST. _tuish_buffering is a depth, not a flag: tuish_begin only clears the
+# buffer when it OPENS the frame, and tuish_end only writes when it closes it.
+#
+# This matters because the framework opens a frame before it calls your code, and puts
+# things in it — the caret hide that precedes every deferred render, for one. An app
+# that buffers inside its own render handler (any host does) used to reset the buffer
+# and throw those away, silently: the caret stayed on, blinking wherever the last cell
+# was drawn. Nesting means whoever opened the frame owns it, and nobody inside can cut
+# it in half by accident.
+#
+# tuish_flush still writes what has accumulated so far and leaves the frame open — an
+# editor echoing a keystroke ahead of its deferred redraw wants exactly that.
+tuish_begin ()
+{
+	test $_tuish_buffering -eq 0 && _tuish_buf=''
+	_tuish_buffering=$(( _tuish_buffering + 1 ))
+	return 0
+}
+tuish_end ()
+{
+	test $_tuish_buffering -le 1 || { _tuish_buffering=$(( _tuish_buffering - 1 )); return 0; }
+	test -n "$_tuish_buf" && _tuish_sink "$_tuish_buf"
+	_tuish_buf=''
+	_tuish_buffering=0
+	return 0
+}
+tuish_flush ()          { test -n "$_tuish_buf" && _tuish_sink "$_tuish_buf"; _tuish_buf=''; return 0; }
 
 # Repeat string $1 exactly $2 times into _tuish_rep. O(log n) via doubling.
 # Shared primitive in the base module: str.sh (tuish_str_repeat) and term.sh
@@ -479,28 +503,81 @@ tuish_ctx_create_region ()
 #
 # CR CC CW CH (optional, same coordinate frame) is the WINDOW the child may draw
 # through — "here is your rectangle, and here is the hole you are seen through".
-# Omitted, it is the region itself. This is what lets a host SCROLL a live child:
-# pass a region whose top is above the pane (R may be <= 0) and the pane as the clip
-# window, and the child slides under the pane's edge, clipped per cell. Its layout
-# size stays W x H throughout, so it never reflows — it is genuinely occluded, not
-# resized. See _tuish_ctx_seat.
+# Omitted, it falls back to this context's tuish_ctx_clip, and failing that to the
+# region itself. This is what lets a host SCROLL a live child: pass a region whose top
+# is above the pane (R may be <= 0), and the child slides under the pane's edge, clipped
+# per cell. Its layout size stays W x H throughout, so it never reflows — it is genuinely
+# occluded, not resized. See _tuish_ctx_seat.
 tuish_ctx_reseat ()   # $1=ctx $2=R $3=C $4=W $5=H [$6=CR $7=CC $8=CW $9=CH]
 {
 	local _abs_r=$(( TUISH_VIEW_TOP + _tx_off_r + ($2 - 1) * _tx_ch ))
 	local _abs_c=$(( TUISH_VIEW_LEFT + _tx_off_c + ($3 - 1) * _tx_cw ))
 	local _host=$_tuish_ctx_active
 	if test $# -ge 9
+	then _tuish_clip_abs "$6" "$7" "$8" "$9"
+	else _tuish_clip_abs
+	fi
+	if test "$_tuish_clipped" -eq 1
 	then
-		local _cab_r=$(( TUISH_VIEW_TOP + _tx_off_r + ($6 - 1) * _tx_ch ))
-		local _cab_c=$(( TUISH_VIEW_LEFT + _tx_off_c + ($7 - 1) * _tx_cw ))
+		local _cr=$_tuish_clip_r _cc=$_tuish_clip_c _cw=$_tuish_clip_w _ch=$_tuish_clip_h
 		tuish_ctx_activate "$1"
-		_tuish_ctx_seat "$_abs_r" "$_abs_c" "$4" "$5" "$_cab_r" "$_cab_c" "$8" "$9"
+		_tuish_ctx_seat "$_abs_r" "$_abs_c" "$4" "$5" "$_cr" "$_cc" "$_cw" "$_ch"
 		tuish_ctx_activate "$_host"
 		return 0
 	fi
 	tuish_ctx_activate "$1"
 	_tuish_ctx_seat "$_abs_r" "$_abs_c" "$4" "$5"
 	tuish_ctx_activate "$_host"
+	return 0
+}
+
+# ─── The clip window ─────────────────────────────────────────────
+# A host that shows children through a PANE — a scrolling document, a viewport with a
+# border — has to clip every one of them to it, on mount and on every reseat. Saying so
+# once beats saying it at each call site and silently corrupting a frame when you forget:
+# a child mounted un-clipped paints over the host's chrome before any reseat can bound it.
+#
+#   tuish_ctx_clip R C W H    # children of this context are seen through this window
+#   tuish_ctx_clip            # no args: they are not clipped (the default)
+#
+# R C W H are the ACTIVE context's logical coords, the same frame as tuish_ctx_mount and
+# tuish_ctx_reseat. It is a per-context field, so a host declares its pane once (in its
+# layout) and every child it mounts or moves is bounded by it. An explicit clip passed to
+# tuish_ctx_reseat still wins.
+_tuish_clip_win=''
+tuish_ctx_register _tuish_clip_win
+
+tuish_ctx_clip ()   # [$1=R $2=C $3=W $4=H]
+{
+	if test $# -ge 4
+	then _tuish_clip_win="$1 $2 $3 $4"
+	else _tuish_clip_win=''
+	fi
+	return 0
+}
+
+# Resolve a clip window to ABSOLUTE cells in the active (host) context's frame:
+# args if given, else the context's tuish_ctx_clip, else none.
+# Out: _tuish_clipped (0/1) and _tuish_clip_r/_c/_w/_h.
+_tuish_clipped=0
+_tuish_clip_r=0; _tuish_clip_c=0; _tuish_clip_w=0; _tuish_clip_h=0
+_tuish_clip_abs ()   # [$1=R $2=C $3=W $4=H]
+{
+	local _q
+	if test $# -ge 4
+	then _q="$1 $2 $3 $4"
+	else _q="$_tuish_clip_win"
+	fi
+	if test -z "$_q"
+	then _tuish_clipped=0; return 0; fi
+
+	local _qr _qc
+	_qr="${_q%% *}"; _q="${_q#* }"
+	_qc="${_q%% *}"; _q="${_q#* }"
+	_tuish_clip_w="${_q%% *}"; _tuish_clip_h="${_q##* }"
+	_tuish_clip_r=$(( TUISH_VIEW_TOP + _tx_off_r + (_qr - 1) * _tx_ch ))
+	_tuish_clip_c=$(( TUISH_VIEW_LEFT + _tx_off_c + (_qc - 1) * _tx_cw ))
+	_tuish_clipped=1
 	return 0
 }
 
@@ -614,18 +691,33 @@ tuish_ctx_dispatch ()
 #
 # The child's output goes in at the point the host called from, so a host that fills its
 # background first and renders its children last still gets that order.
+#
+# Buffering the child is not enough on its own: a child is free to tuish_flush inside its
+# own render (canvas_demo does, to get its panels out before its status line), and a flush
+# writes whatever has accumulated no matter how deep the frame is. So HOLD as well — then
+# begin/end children, flushing children and plain children all fold into the host's frame
+# alike, and none of them can escape it.
 tuish_ctx_render ()
 {
 	local _host=$_tuish_ctx_active _hostbuf=$_tuish_buffering
+	local _hold=0
+	if test "$_hostbuf" -gt 0 && test "$_tuish_holding" -eq 0
+	then _tuish_holding=1; _tuish_hold=''; _hold=1
+	fi
+
 	tuish_ctx_activate "$1"
 	tuish_begin
 	"${_tuish_render_fn:-tuish_on_redraw}" -1
 	local _out=$_tuish_buf
 	_tuish_buf=''; _tuish_buffering=0
 	tuish_ctx_activate "$_host"
-	if test "$_hostbuf" -eq 1
+
+	if test "$_hold" -eq 1
+	then _tuish_holding=0; _out="${_tuish_hold}${_out}"; _tuish_hold=''
+	fi
+	if test "$_hostbuf" -gt 0
 	then _tuish_buf="${_tuish_buf}${_out}"
-	else test -n "$_out" && _tuish_out "$_out"
+	else test -n "$_out" && _tuish_sink "$_out"
 	fi
 	return 0
 }
@@ -700,13 +792,11 @@ tuish_ctx_sync_interval ()   # $@ = child ctx ids
 #
 # The child's chosen tick (its tuish_idle_interval) is left in its own frame; after
 # mounting all children, the host calls tuish_ctx_sync_interval to adopt the fastest.
-# Optional clip window ("R C W H", the host's logical coords) for the NEXT
-# tuish_ctx_mount. Set it when the child must be clipped from its VERY FIRST paint:
-# a mount is not just bookkeeping, it runs the child's setup and paints it, so a
-# child mounted partly outside its host's pane would draw over the host's chrome once
-# before any tuish_ctx_reseat could bound it. Consumed and cleared by tuish_ctx_mount.
-TUISH_MOUNT_CLIP=''
-
+#
+# The child is clipped from its VERY FIRST paint to this context's tuish_ctx_clip, if it
+# has one. That is not a detail: a mount is not bookkeeping, it runs the child's setup and
+# PAINTS it, so a child mounted partly outside its host's pane would draw over the host's
+# chrome once, before any tuish_ctx_reseat could bound it.
 tuish_ctx_mount ()
 {
 	local _r=$1 _c=$2 _w=$3 _h=$4 _fn=$5
@@ -720,24 +810,16 @@ tuish_ctx_mount ()
 	# outermost mount holds: a nested one must not reset the buffer it is accumulating
 	# into.)
 	local _hold=0
-	if test "$_tuish_buffering" -eq 1 && test "$_tuish_holding" -eq 0
+	if test "$_tuish_buffering" -gt 0 && test "$_tuish_holding" -eq 0
 	then _tuish_holding=1; _tuish_hold=''; _hold=1
 	fi
 
 	# Resolve the clip window in the HOST's frame — it has to happen here, before
 	# create_region switches us into the child's.
-	local _clip=0 _cab_r=0 _cab_c=0 _ccw=0 _cch=0
-	if test -n "$TUISH_MOUNT_CLIP"
-	then
-		local _q="$TUISH_MOUNT_CLIP" _qr _qc
-		_qr="${_q%% *}"; _q="${_q#* }"
-		_qc="${_q%% *}"; _q="${_q#* }"
-		_ccw="${_q%% *}"; _cch="${_q##* }"
-		_cab_r=$(( TUISH_VIEW_TOP + _tx_off_r + (_qr - 1) * _tx_ch ))
-		_cab_c=$(( TUISH_VIEW_LEFT + _tx_off_c + (_qc - 1) * _tx_cw ))
-		_clip=1
-	fi
-	TUISH_MOUNT_CLIP=''
+	_tuish_clip_abs
+	local _clip=$_tuish_clipped
+	local _cab_r=$_tuish_clip_r _cab_c=$_tuish_clip_c
+	local _ccw=$_tuish_clip_w   _cch=$_tuish_clip_h
 
 	tuish_ctx_create_region "$_r" "$_c" "$_w" "$_h"
 	local _child=$TUISH_CTX

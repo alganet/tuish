@@ -200,16 +200,25 @@ _tuish_parse_event ()
 		_tuish_viewport_on_resize
 	fi
 
+	# ONE frame for the whole dispatch: the handler's output, then (if it asked for a
+	# deferred redraw) the render's, closed once at the end. Frames nest, so a handler
+	# that opens its own no longer resets ours.
+	#
+	# _base heals an UNBALANCED handler. A depth counter is unforgiving where the old
+	# boolean self-healed: one stray tuish_begin would wedge the loop into never
+	# flushing again — a permanently frozen screen. Restoring the depth we entered at
+	# turns that into a lost frame instead of a dead app.
 	tuish_begin
+	local _base=$_tuish_buffering
 	TUISH_HANDLED=0
 	"${_tuish_event_fn:-tuish_on_event}"
+	_tuish_buffering=$_base
 
 	if test $_tuish_redraw_requested -eq 1
 	then
-		# rAF mode: event handler requested deferred redraw
-		# Discard any output from the event handler
+		# rAF mode: a deferred redraw supersedes whatever the handler drew. Discard the
+		# CONTENT, not the frame — the frame is still ours and still open.
 		_tuish_buf=''
-		_tuish_buffering=0
 		if test "${_tuish_raf_inhibit:-0}" -eq 1 || tuish_has_pending_input
 		then
 			# More input in flight — leave the redraw pending. When
@@ -219,22 +228,21 @@ _tuish_parse_event ()
 			# idle event) fires the redraw.
 			:
 		else
-			# Input exhausted — render now
+			# Input exhausted — render now. The caret is re-declared every frame: we
+			# hide it here, and a handler that wants one calls tuish_cursor, which
+			# shows it again. Because frames nest, that hide now survives a render
+			# handler opening a frame of its own — which is what every host does, and
+			# which used to throw it away.
 			_tuish_redraw_requested=0
 			local _level=$_tuish_redraw_level
 			_tuish_redraw_level=0
-			_tuish_buffering=1
-			_tuish_buf=''
 			tuish_hide_cursor
 			_tuish_cursor_vrow=0
 			"${_tuish_render_fn:-tuish_on_redraw}" "$_level"
-			test -n "$_tuish_buf" && _tuish_sink "$_tuish_buf"
-			_tuish_buf=''
-			_tuish_buffering=0
+			_tuish_buffering=$_base
 		fi
-	else
-		tuish_end
 	fi
+	tuish_end
 }
 
 # ─── Internal: byte-to-event loop ──────────────────────────────────
