@@ -80,13 +80,16 @@ RUN_SPEED=12    # held run speed (tiles/sec). Autorepeat presses arriving sooner
                 # autorepeat rate. Keep it slow enough that several idle ticks (and
                 # thus gravity) fall between steps, so a held run can't outrun the
                 # fall. Raise for a snappier run, lower for finer control.
-MOVE_TTL_US=150000   # how long a movement keypress counts as "still moving" (µs).
+MOVE_TTL=0.15   # how long a movement keypress counts as "still moving" (seconds).
                 # A plain VT autorepeats only the LAST key, so pressing jump stops
                 # the movement key's repeats — we can't see it's still held. So at
                 # take-off we carry momentum if a move happened within this window
                 # (a running jump keeps moving; a standing jump goes straight up).
                 # Keep it above the autorepeat interval so a held run stays "moving"
                 # between repeats; it doubles as the coyote window after release.
+                # We hand this to tuish_key_ttl and ask tuish_key_down — the library
+                # keeps the window and ages it on OUR tick, which is the part we could
+                # not do ourselves once a host started choosing the tick.
 ENEMY_SPD=5     # enemy patrol speed (tiles/sec)
 SUB_DT=20000    # max physics sub-step (µs): a coarse idle interval is split into
                 # slices this big so gravity advances in fine increments (<1
@@ -136,16 +139,25 @@ _map_rows=0 _map_cols=0
 # _step_acc banks game-time since the last step so held autorepeat can't step
 # faster than RUN_SPEED, whatever the keyboard's repeat rate.
 #   _face     last horizontal direction pressed (-1/0/+1)
-#   _move_ttl µs left in which a move still counts as "moving" (for jump momentum)
 #   _air_run  direction the airborne player keeps stepping (latched at take-off);
 #             0 = no horizontal carry. Lets a running jump keep moving even though
 #             autorepeat switched to the jump key — see _jump / _walk / _step.
+# Whether a movement key is still DOWN is not ours to track: the library keeps that
+# window and ages it on our tick (tuish_key_track / tuish_key_down, set up in _g_setup).
 _px=0 _py=0 _pvy=0
 _step_acc=$STEP_MIN_US
-_face=0 _move_ttl=0 _air_run=0
+_face=0 _air_run=0
 _pcx=0 _pcy=0 _ppcx=0 _ppcy=0
 _grounded=0
 _start_cx=2 _start_cy=2
+
+# The movement keys, named once. Declaring the set is also how it is CLEARED — every
+# window goes back to empty — which is why the state resets below call it: respawning
+# must not leave a stale hold for the next jump to carry.
+#
+# Only ever call this after tuish_init. The set is a context field, so before there is a
+# context it lands on a global that the first activate throws away.
+_g_track_keys () { tuish_key_track 'left' 'char a' 'right' 'char d'; }
 
 _enemy_n=0 _coin_n=0 _coins_got=0
 _goal_x=0 _goal_y=0
@@ -300,7 +312,7 @@ EOF
 	# place player at the room start
 	_px=$(( _start_cx * FP )); _py=$(( _start_cy * FP ))
 	_pvy=0 _grounded=0 _step_acc=$STEP_MIN_US
-	_face=0 _move_ttl=0 _air_run=0
+	_face=0 _air_run=0; _g_track_keys
 	_pcx=$_start_cx _pcy=$_start_cy _ppcx=$_start_cx _ppcy=$_start_cy
 	return 0
 }
@@ -423,7 +435,7 @@ _die ()
 	_deaths=$(( _deaths + 1 ))
 	_px=$(( _start_cx * FP )); _py=$(( _start_cy * FP ))
 	_pvy=0 _grounded=0 _step_acc=$STEP_MIN_US
-	_face=0 _move_ttl=0 _air_run=0
+	_face=0 _air_run=0; _g_track_keys
 	_pcx=$_start_cx _pcy=$_start_cy
 	_need_full=1
 	return 0
@@ -732,8 +744,6 @@ _tick ()
 		# threshold so an idle spell can't accrue credit for a burst of steps.
 		_step_acc=$(( _step_acc + TICK_DT ))
 		if test "$_step_acc" -gt "$STEP_MIN_US"; then _step_acc=$STEP_MIN_US; fi
-		# Age the "still moving" window (gates jump momentum); floors at 0.
-		if test "$_move_ttl" -gt 0; then _move_ttl=$(( _move_ttl - TICK_DT )); fi
 	fi
 	# Render at most ~60 fps: cheap physics-only ticks in between keep the
 	# timeout-as-clock accurate (less per-tick processing it can't account for).
@@ -753,13 +763,16 @@ _tick ()
 # of skimming across a gap. Gravity/jumps run on the idle tick regardless.
 #
 # In the air the player can't autorepeat (the jump key took over autorepeat), so
-# _walk only records the intent (_face / _move_ttl) and steers the latched carry;
-# the tick does the moving (see _step). On the ground it takes the throttled step.
+# _walk only records the intent (_face) and steers the latched carry; the tick does
+# the moving (see _step). On the ground it takes the throttled step.
 _walk ()  # $1 = direction (-1/+1)
 {
 	if test "$_state" != 'play' || test "$_g_started" -ne 1 || test "$_too_small" -eq 1
 	then return 0; fi
-	_face=$1 _move_ttl=$MOVE_TTL_US
+	# No window to stamp: this event IS the stamp. tuish_key_track named these keys, so
+	# the library refilled the window before this binding ran — which is why _jump can
+	# ask tuish_key_down about a key whose event is still in flight.
+	_face=$1
 	if test "$_grounded" -eq 0; then _air_run=$1; return 0; fi   # airborne: steer only
 	if test "$_step_acc" -lt "$STEP_MIN_US"; then return 0; fi   # throttle autorepeat
 	_hstep "$1"
@@ -774,8 +787,13 @@ _jump ()
 	if test "$_grounded" -eq 1
 	then
 		_pvy=$(( - JUMP_U )); _grounded=0
-		# carry horizontal momentum if a move was pressed within MOVE_TTL_US
-		if test "$_move_ttl" -gt 0; then _air_run=$_face; else _air_run=0; fi
+		# Carry horizontal momentum if a movement key is still down. A plain VT cannot
+		# say so — pressing jump stops the movement key's repeats, and there is no
+		# release event to miss — so "still down" is the library's recency window
+		# (tuish_key_ttl MOVE_TTL, above): a running jump keeps moving, a standing one
+		# goes straight up, and it doubles as the coyote window just after release.
+		if tuish_key_down 'left' 'char a' 'right' 'char d'
+		then _air_run=$_face; else _air_run=0; fi
 	fi
 	return 0
 }
@@ -808,7 +826,7 @@ _g_setup ()
 	_room=1 _state=play _deaths=0 _win_shown=0
 	_g_started=0 _too_small=0 _need_full=0 _hud_dirty=0
 	_render_acc=0 _step_acc=$STEP_MIN_US
-	_face=0 _move_ttl=0 _air_run=0 _grounded=0 _coins_got=0
+	_face=0 _air_run=0 _grounded=0 _coins_got=0
 
 	# Pick the idle interval — the game clock — for OUR context. Set it after init
 	# via tuish_idle_interval so it works whether we own the device (standalone) or
@@ -838,6 +856,17 @@ _g_setup ()
 	tuish_bind 'up'      '_jump'
 	tuish_bind 'char w'  '_jump'
 	tuish_bind '*'       '_noop'
+
+	# Ask the library to track whether a movement key is still DOWN. A plain VT never
+	# says so — it just repeats the last key — so it is inferred from recency, and the
+	# window has to outlast the autorepeat gap without reaching the initial repeat delay.
+	# _jump reads it (tuish_key_down) to decide whether a jump is a running one.
+	#
+	# This has to be here rather than in a constant of ours because the decay rides OUR
+	# idle tick, and hosted, our tick is negotiated with the host — a number we do not
+	# get to know. Track after tuish_init, like the binds, so it lands in our context.
+	_g_track_keys
+	tuish_key_ttl "$MOVE_TTL"
 
 	# Render into a fixed partial slab, not the whole screen: the board and HUD
 	# live in GAME_VIEW_H reserved rows. Hosted, this fills our region.
