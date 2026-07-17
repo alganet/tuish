@@ -46,7 +46,12 @@ _status_msg=''
 # The line buffer we edit. A NAME, not a literal, so a host can hand us a buffer it
 # already populated (a doc snippet) and read it back afterwards — see _ed_text.
 # Standalone this stays '_', the historical scratch buffer.
+#
+# PER-CONTEXT: a host sets it from inside our context (after our tuish_init adopts it),
+# so two editors mounted in the same page can edit two different buffers without one
+# clobbering the other's target.
 _ed_buf='_'
+command -v tuish_ctx_register >/dev/null 2>&1 && tuish_ctx_register _ed_buf
 
 # The editor's own clipboard. Held here rather than read back from the system
 # clipboard because OSC 52 is write-only by design (see src/clip.sh): a terminal
