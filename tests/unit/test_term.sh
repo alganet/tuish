@@ -23,6 +23,13 @@ TESTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 . "$TESTS_DIR/../src/tui.sh"
 . "$TESTS_DIR/../src/term.sh"
 
+
+# Exercise the SHIPPED configuration. tuish_fnfix normally fires from tuish_init, which unit
+# tests deliberately never call (they stub the device) — so without this, every suite here
+# would validate the framework with its ksh `local` still leaking, i.e. not the library that
+# actually runs. It is a no-op on every shell whose `local` already works.
+command -v tuish_fnfix >/dev/null 2>&1 && tuish_fnfix
+
 printf 'Unit tests: term.sh output primitives\n'
 
 # Independent reference ESC byte (not via the ord table the code uses).
@@ -72,5 +79,42 @@ assert_eq "$_out" "${_esc}[32m50%done" "embedded seq + % text survives tuish_pri
 TUISH_LINES=24
 _out=$( _tuish_buffering=0; tuish_put_at 1 1 'hi' )
 assert_eq "$_out" "${_esc}[1;1Hhi" "put_at places (vmove) then prints"
+
+# ─── The caret's SHAPE is declared, and rides with the caret ─────
+# Position and visibility have always been re-declared every frame. The shape used to be a
+# single escape written once at setup — which works standalone and is silently thrown away
+# when hosted, because a mount happens inside the host's event handler and the rAF path
+# discards that frame's content. So the shape is a DECLARATION now, and tuish_cursor emits
+# it: no caret, no shape, and the context that shows the caret last decides what it is.
+_out=$( _tuish_buffering=0; tuish_cursor_shape 6 )
+assert_eq "$_out" "" "cursor_shape writes NOTHING — it declares (this is the whole fix)"
+
+tuish_cursor_shape 6
+assert_eq "$_tuish_cursor_shape" "6" "cursor_shape 6 -> the context declares a steady bar"
+tuish_cursor_shape 0
+assert_eq "$_tuish_cursor_shape" "" "cursor_shape 0 means NO OPINION, not DECSCUSR 0"
+tuish_cursor_shape
+assert_eq "$_tuish_cursor_shape" "" "... and so does no argument at all"
+
+# The shape goes out with the caret: place, shape, show — in that order.
+# (tuish_end is captured in a subshell above, so the parent is still inside that frame —
+# open ours from a clean depth.)
+TUISH_VIEW_ROWS=24; TUISH_VIEW_COLS=80
+_tuish_buffering=0; _tuish_cursor_shape_dev=''
+tuish_cursor_shape 6
+tuish_begin; tuish_cursor 1 1; _out=$( tuish_end )
+assert_eq "$_out" "${_esc}[1;1H${_esc}[6 q${_esc}[?25h" "the shape rides out with the caret"
+
+# ... but only when the device does not already have it. Re-sending DECSCUSR every frame
+# re-arms a real terminal's blink phase, and xterm.js re-fires its option change with it.
+_tuish_buffering=0
+tuish_begin; tuish_cursor 2 3; _out=$( tuish_end )
+assert_eq "$_out" "${_esc}[2;3H${_esc}[?25h" "an unchanged shape costs no bytes"
+
+# A context with no opinion shows a caret and says nothing about its shape.
+_tuish_buffering=0; _tuish_cursor_shape_dev=''
+tuish_cursor_shape 0
+tuish_begin; tuish_cursor 1 1; _out=$( tuish_end )
+assert_eq "$_out" "${_esc}[1;1H${_esc}[?25h" "no declaration, no DECSCUSR — the caret is still shown"
 
 test_summary

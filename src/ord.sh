@@ -19,28 +19,28 @@
 
 _tuish_init_tables ()
 {
-	local _i=1 _chr='' _d1 _d2 _d3
-	if printf -v _chr 'x' >/dev/null 2>&1 && test "$_chr" = 'x'
+	local _tuish_ord_i=1 _tuish_ord_chr='' _tuish_ord_d1 _tuish_ord_d2 _tuish_ord_d3
+	if printf -v _tuish_ord_chr 'x' >/dev/null 2>&1 && test "$_tuish_ord_chr" = 'x'
 	then
 		# bash/zsh: printf -v avoids all subshells
-		while test $_i -le 255
+		while test $_tuish_ord_i -le 255
 		do
-			_d1=$((_i / 64)); _d2=$(( (_i / 8) % 8 )); _d3=$((_i % 8))
-			printf -v _chr "\\${_d1}${_d2}${_d3}"
-			eval "_tuish_chr_$_i=\"\$_chr\""
-			_i=$((_i + 1))
+			_tuish_ord_d1=$((_tuish_ord_i / 64)); _tuish_ord_d2=$(( (_tuish_ord_i / 8) % 8 )); _tuish_ord_d3=$((_tuish_ord_i % 8))
+			printf -v _tuish_ord_chr "\\${_tuish_ord_d1}${_tuish_ord_d2}${_tuish_ord_d3}"
+			eval "_tuish_chr_$_tuish_ord_i=\"\$_tuish_ord_chr\""
+			_tuish_ord_i=$((_tuish_ord_i + 1))
 		done
 	elif test $_tuish_printf -eq 0
 	then
 		# mksh: builtin echo -ne with \0NNN octal (no external printf).
 		# The trailing 'X' is a sentinel — see the note below.
-		while test $_i -le 255
+		while test $_tuish_ord_i -le 255
 		do
-			_d1=$((_i / 64)); _d2=$(( (_i / 8) % 8 )); _d3=$((_i % 8))
-			_chr=$(echo -ne "\\0${_d1}${_d2}${_d3}X")
-			_chr="${_chr%X}"
-			eval "_tuish_chr_$_i=\"\$_chr\""
-			_i=$((_i + 1))
+			_tuish_ord_d1=$((_tuish_ord_i / 64)); _tuish_ord_d2=$(( (_tuish_ord_i / 8) % 8 )); _tuish_ord_d3=$((_tuish_ord_i % 8))
+			_tuish_ord_chr=$(echo -ne "\\0${_tuish_ord_d1}${_tuish_ord_d2}${_tuish_ord_d3}X")
+			_tuish_ord_chr="${_tuish_ord_chr%X}"
+			eval "_tuish_chr_$_tuish_ord_i=\"\$_tuish_ord_chr\""
+			_tuish_ord_i=$((_tuish_ord_i + 1))
 		done
 	else
 		# ksh93/busybox: one subshell per char (down from two).
@@ -52,13 +52,13 @@ _tuish_init_tables ()
 		# newline, at which point pasted line breaks vanished on exactly the shells
 		# that take this branch — busybox, which is the browser/wasm target. Append a
 		# sentinel byte and strip it back off, and the character survives.
-		while test $_i -le 255
+		while test $_tuish_ord_i -le 255
 		do
-			_d1=$((_i / 64)); _d2=$(( (_i / 8) % 8 )); _d3=$((_i % 8))
-			_chr=$(printf "\\${_d1}${_d2}${_d3}X")
-			_chr="${_chr%X}"
-			eval "_tuish_chr_$_i=\"\$_chr\""
-			_i=$((_i + 1))
+			_tuish_ord_d1=$((_tuish_ord_i / 64)); _tuish_ord_d2=$(( (_tuish_ord_i / 8) % 8 )); _tuish_ord_d3=$((_tuish_ord_i % 8))
+			_tuish_ord_chr=$(printf "\\${_tuish_ord_d1}${_tuish_ord_d2}${_tuish_ord_d3}X")
+			_tuish_ord_chr="${_tuish_ord_chr%X}"
+			eval "_tuish_chr_$_tuish_ord_i=\"\$_tuish_ord_chr\""
+			_tuish_ord_i=$((_tuish_ord_i + 1))
 		done
 	fi
 }
@@ -81,20 +81,20 @@ _tuish_init_tables
 # negative on signed-char platforms — this is strictly more correct).
 _tuish_build_ord_hi ()
 {
-	local _i _body=''
-	_i=128
-	while test $_i -le 255
+	local _tuish_ord_i _tuish_ord_body=''
+	_tuish_ord_i=128
+	while test $_tuish_ord_i -le 255
 	do
-		_body="${_body}\"\$_tuish_chr_${_i}\") _tuish_code=${_i};; "
-		_i=$((_i + 1))
+		_tuish_ord_body="${_tuish_ord_body}\"\$_tuish_chr_${_tuish_ord_i}\") _tuish_code=${_tuish_ord_i};; "
+		_tuish_ord_i=$((_tuish_ord_i + 1))
 	done
-	_i=1
-	while test $_i -le 127
+	_tuish_ord_i=1
+	while test $_tuish_ord_i -le 127
 	do
-		_body="${_body}\"\$_tuish_chr_${_i}\") _tuish_code=${_i};; "
-		_i=$((_i + 1))
+		_tuish_ord_body="${_tuish_ord_body}\"\$_tuish_chr_${_tuish_ord_i}\") _tuish_code=${_tuish_ord_i};; "
+		_tuish_ord_i=$((_tuish_ord_i + 1))
 	done
-	eval "_tuish_ord_hi () { case \"\$1\" in ${_body}*) _tuish_code=0;; esac; }"
+	eval "_tuish_ord_hi () { case \"\$1\" in ${_tuish_ord_body}*) _tuish_code=0;; esac; }"
 }
 
 # UTF-8 continuation-byte fast decoder (result in _tuish_c6 = the low 6 bits,
@@ -111,13 +111,13 @@ _tuish_build_ord_hi ()
 # the common all-ASCII string fast.
 _tuish_build_cont ()
 {
-	local _i=128 _body=''
-	while test $_i -le 191
+	local _tuish_ord_i=128 _tuish_ord_body=''
+	while test $_tuish_ord_i -le 191
 	do
-		_body="${_body}\"\$_tuish_chr_${_i}\") _tuish_c6=$((_i - 128));; "
-		_i=$((_i + 1))
+		_tuish_ord_body="${_tuish_ord_body}\"\$_tuish_chr_${_tuish_ord_i}\") _tuish_c6=$((_tuish_ord_i - 128));; "
+		_tuish_ord_i=$((_tuish_ord_i + 1))
 	done
-	eval "_tuish_cont6 () { case \"\$1\" in ${_body}*) _tuish_c6=0;; esac; }"
+	eval "_tuish_cont6 () { case \"\$1\" in ${_tuish_ord_body}*) _tuish_c6=0;; esac; }"
 }
 
 # bash/zsh have `printf -v` (a fork-free assignment) and can resolve any byte

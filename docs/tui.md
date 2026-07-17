@@ -88,10 +88,11 @@ wedge the loop into never flushing again.
 | `tuish_restore_cursor` | Restore cursor position (DECRC)    |
 | `tuish_reset_scroll`   | Reset scroll region to full screen |
 
-The caret is **re-declared every frame**. The framework hides it before each deferred
-render; a render handler that wants one calls `tuish_cursor R C`, which places and shows
-it. Draw nothing that shows it and there is no caret -- which is what you want for a
-document, and what you do not want to discover by accident.
+The caret is **re-declared every frame** -- its position, its visibility, and its *shape*.
+The framework hides it before each deferred render; a render handler that wants one calls
+`tuish_cursor R C`, which places it, gives it the shape this context declared with
+`tuish_cursor_shape`, and shows it. Draw nothing that shows it and there is no caret --
+which is what you want for a document, and what you do not want to discover by accident.
 
 For full cursor movement, shapes, and drawing primitives, see [term.md](term.md).
 

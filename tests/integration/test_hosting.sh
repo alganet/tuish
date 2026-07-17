@@ -24,18 +24,15 @@ trap 'cleanup_session' EXIT
 
 printf 'Integration test: app-in-app hosting (%s)\n' "$TUISH_SHELL"
 
-# The embedded guest here is canvas_demo, which has a PRE-EXISTING ksh box-drawing
-# rendering bug (see test_canvas under ksh) unrelated to hosting. The hosting
-# mechanism itself is shell-agnostic — exercised live on bash/zsh/mksh below and
-# by the region checks in the unit suite. Skip on ksh so this test tracks the
-# hosting code, not canvas_demo's ksh quirk.
-case "$TUISH_SHELL" in
-	ksh*)
-		printf '  SKIP: canvas_demo has a pre-existing ksh rendering bug (see test_canvas)\n'
-		test_summary
-		exit 0
-		;;
-esac
+# This used to skip on ksh: the embedded guest is canvas_demo, and canvas_demo did not
+# render under ksh — a "pre-existing box-drawing bug" nobody had gotten to the bottom of.
+#
+# It was not a box-drawing bug. On ksh93 `local` is `typeset`, and typeset does not create a
+# local in a POSIX function — so draw.sh's `local _top`, which holds a box's TOP BORDER
+# STRING, was overwriting the caller's `_top` layout row, and the border got handed back to
+# tuish_text as a coordinate. compat.sh's tuish_fnfix now makes `local` mean local on ksh
+# (see the comment there). The skip is gone, and ksh runs the same hosting tests as
+# everybody else.
 
 # Start the host page.
 tmux new-session -d -s "$TUISH_SESSION" -x 80 -y 24 \

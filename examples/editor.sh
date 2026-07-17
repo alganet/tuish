@@ -53,6 +53,24 @@ _status_msg=''
 _ed_buf='_'
 command -v tuish_ctx_register >/dev/null 2>&1 && tuish_ctx_register _ed_buf
 
+# Everything above this line is ONE EDITOR'S state, and an editor is a thing you can have
+# two of. Declare it as a context field set and each mounted instance gets its own copy —
+# its own cursor, its own scroll offset, its own selection. Before this, two editors in one
+# page shared all of it: type in the left one and the right one's cursor moved.
+#
+# Declared HERE, at source time, and not inside _ed_setup, because that is where the real
+# defaults are. Captured at attach time instead, the SECOND editor would open holding the
+# first one's cursor row.
+#
+# _ed_buf is deliberately NOT in the set. It is a buffer NAME a host may seed before
+# mounting us (the website hands us a doc snippet), and attaching resets a set to its
+# declared defaults — which would wipe the seed. It stays on the framework tier, where it
+# already works.
+command -v tuish_ctx_declare >/dev/null 2>&1 && tuish_ctx_declare _ed \
+	_cur_row _cur_col _cur_dcol \
+	_view_top _view_left _view_height _view_width \
+	_sel_row _sel_col _status_msg
+
 # The editor's own clipboard. Held here rather than read back from the system
 # clipboard because OSC 52 is write-only by design (see src/clip.sh): a terminal
 # will let us SET the clipboard but not read it, so an app that wants copy/paste
@@ -1196,20 +1214,29 @@ _ed_on_redraw ()
 # Takes an optional file path in $1, exactly like _ed_main.
 _ed_setup ()
 {
-	# Fresh state each launch (a host may run us more than once).
-	_cur_row=1; _cur_col=1; _cur_dcol=0
-	_view_top=1; _view_left=0
-	_sel_row=0; _sel_col=0; _status_msg=''
-
 	tuish_init
-	tuish_cursor_shape 6          # steady bar cursor
+	# Our instance state, at its declared defaults. This replaces the hand-written "fresh
+	# state each launch" block that used to sit above tuish_init: the framework knows the
+	# defaults because we declared them, and — the part the old block could not do —
+	# these are now OUR copy, not the process's.
+	#
+	# Guarded to match the tuish_ctx_declare above: that one is optional (an older tuish has
+	# no field sets), so this one has to be too. Guard the declaration and not the attach and
+	# the app sources cleanly, then dies in setup with "command not found".
+	command -v tuish_ctx_fields >/dev/null 2>&1 && tuish_ctx_fields _ed
+
+	# A buffer of our own, unless a host handed us one. Keyed on the context id, so two
+	# editors mounted side by side do not edit the same lines. (Standalone we are context
+	# 1 and this is just a name.)
+	test "$_ed_buf" = '_' && _ed_buf="ed$TUISH_CTX"
+
+	tuish_cursor_shape 6          # steady bar: declared once, re-asserted with every caret
 	tuish_mouse_on
 
 	# Register render/event handlers BY NAME (not by redefining the global hooks),
 	# so hosting composes: our handlers live in our context, the host keeps its own.
 	tuish_on_event  _ed_on_event
 	tuish_on_redraw _ed_on_redraw
-	tuish_on_fini   _ed_fini      # restore the cursor on ANY exit path (incl. unmount)
 	_ed_setup_bindings
 
 	tuish_viewport fixed 10
@@ -1237,10 +1264,19 @@ _ed_setup ()
 	_ed_render
 }
 
-# The bar-cursor restore lives in the registered fini hook (not after tuish_run):
-# a cooperatively-driven editor never returns from a run of its own, but tuish_fini
-# runs the hook on every exit path — standalone, modal return, and coop unmount.
-_ed_fini () { tuish_cursor_shape 0; }
+# We declare a bar caret (tuish_cursor_shape 6, above) and that is the whole of our
+# involvement with it. We do not put it back.
+#
+# There used to be a fini hook here that did, and it had to ask `tuish_hosted` first —
+# because a host unmounts us for its own reasons (you left edit mode; the block you were
+# editing scrolled off its pane), and resetting the caret there reached out and changed the
+# terminal device-wide, under whatever else was still on screen and being typed into. Asking
+# was the workaround. Not restoring is the fix: we own our rectangle, not the device, and
+# that is true standalone as well — the device layer took the caret and the device layer puts
+# it back (tuish_fini emits DECSCUSR 0 exactly once, if anyone ever had an opinion).
+#
+# An app REQUESTS device state. It never restores it. Which is why this app no longer has
+# to know whether it is hosted at all.
 
 # Entry point for the BLOCKING form: standalone (the bootstrap below) or a modal host
 # that runs us inside a region it created and gets control back when we quit.

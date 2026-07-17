@@ -164,6 +164,39 @@ _tuish_kitty_raw='letter'
 # into the shell after exit (the root context's _tuish_mouse is still 0).
 _tuish_mouse_dev=0
 
+# The same argument holds for kitty's detailed mode, which was never turned off at all:
+# tuish_detailed_on emits `[=11u` and nothing ever put it back, so a child that enabled it
+# leaked repeat/release reports into the shell after exit.
+#
+# The rule both encode: an app REQUESTS device state; only the device layer restores it. An
+# app that puts the terminal back is reaching outside the rectangle it owns.
+_tuish_detailed_dev=0
+
+# AUTOWRAP has no device mirror, and that is deliberate — the obvious symmetry here is a
+# trap I fell into and had to back out of.
+#
+# _tuish_wrap is per-context, and it looks like it needs reconciling on every context
+# switch: a child turns DECAWM on, the host resumes with _tuish_wrap=0, and the terminal is
+# left wrapping while the host thinks it clips. But look at what the flag actually gates
+# (term.sh): wrap=0 makes tuish_text TRIM the text to the columns that fit. A context with
+# wrap=0 never lets a glyph reach the right edge, so what DECAWM is set to cannot affect it.
+# The stale device is inert.
+#
+# The one real mismatch is the other direction — a context with wrap=1 (which does NOT trim,
+# by definition) running while DECAWM is off, so the terminal clips where the app wanted it
+# to wrap. That needs a device toggle, and tuish_wrap_on already emits one. It only goes
+# stale if some OTHER context calls tuish_wrap_off in between.
+#
+# Reconciling that on every tuish_ctx_activate is what I tried, and it is worse than the
+# disease: _tuish_write routes by _tuish_buffering, which is itself a per-context register,
+# so an escape emitted mid-switch lands in whichever buffer happens to be swapped in — and
+# the toolkit's one-buffer-one-write-one-frame invariant (see _tuish_sink) goes with it.
+# A narrow hazard nothing in-tree can trigger is not worth breaking the frame for.
+#
+# So: if you write a widget that calls tuish_wrap_on, do not also expect a sibling to call
+# tuish_wrap_off and leave you correct. Re-assert it in your render, the way the caret shape
+# is re-asserted (term.sh).
+
 # ─── Control ────────────────────────────────────────────────────────
 
 _tuish_quit=''
@@ -227,6 +260,19 @@ TUISH_INIT_ROW=0
 _tuish_cursor_abs_row=0
 _tuish_cursor_vrow=0
 _tuish_cursor_vcol=0
+
+# The caret's SHAPE, alongside its position — it is caret state, and it marshals with the
+# rest of it. term.sh owns the setter and the emit; the variables live here because the two
+# that describe the DEVICE are needed by code that cannot assume term.sh was sourced:
+# event.sh has to forget the cache wherever it throws frame content away, and tuish_fini has
+# to know whether anybody ever had an opinion about the caret at all.
+#
+#   _tuish_cursor_shape      PER-CONTEXT declaration. '' = no opinion.
+#   _tuish_cursor_shape_dev  DEVICE: the last DECSCUSR that actually reached the terminal.
+#   _tuish_cursor_shape_set  DEVICE: did we ever change it? Only then is there a restore.
+_tuish_cursor_shape=''
+_tuish_cursor_shape_dev=''
+_tuish_cursor_shape_set=0
 TUISH_PROTOCOL=''
 TUISH_TIMING="${TUISH_TIMING:-}"   # preserve a launcher-declared value (fast-path)
 TUISH_TABSIZE="${TUISH_TABSIZE:-4}"
@@ -328,16 +374,42 @@ TUISH_CTX_ROOT=0
 _tuish_ctx_parent=''
 _tuish_ctx_names=''
 
-# A context's region: the absolute terminal rectangle it draws inside. The root
-# is not hosted — its region is the whole screen (rows/cols 0 mean "use
-# TUISH_LINES/COLUMNS"). A child seeded by tuish_ctx_create_region gets _hosted=1
-# and its rectangle, so a hosted "fullscreen" fills the region instead of the
-# terminal (and never touches the alt-screen).
-_tuish_hosted=0
+# A context's region: the absolute terminal rectangle it draws inside. EVERY context has
+# one — the root's is the whole terminal, a child's is what its host handed it — so the
+# transform math is the same for everybody and nothing has to ask "am I in a region?".
+#
+# What differs between them is not the region. It is who owns the DEVICE.
 _tuish_rgn_top=1
 _tuish_rgn_left=0
 _tuish_rgn_rows=0
 _tuish_rgn_cols=0
+
+# Do I own the terminal device? A PREDICATE: call it in a condition.
+#
+# This used to be `_tuish_hosted`, which conflated two facts that are not the same fact:
+#
+#   "I draw into a region"     — true for EVERYONE, including the root
+#   "I own the terminal"       — true for exactly one context per process
+#
+# Only the second one is worth branching on, and only the framework should ever branch on
+# it. An app that asks is almost always about to touch the device — the alt-screen, the
+# scroll region, a caret shape — which is precisely what it must not do: a host unmounts a
+# child for its own reasons, and a child putting the terminal back on its way out of a
+# rectangle it never owned changes the screen for everybody. Apps REQUEST device state; the
+# device layer restores it. See docs/hosting.md.
+#
+# The default is 1, not 0, and that is deliberate: a context that was never seated into a
+# region owns the terminal by definition. (It also keeps the unit tests that never call
+# tuish_ctx_create on the right branch.)
+_tuish_owns_dev=1
+
+# The public predicate. Its polarity reads backwards from the field, and that is on purpose:
+# `tuish_hosted` is the documented, historical spelling and every doc and any user code that
+# calls it keeps working byte-identically. The framework itself branches on the raw field.
+#
+# In APP code this is a smell — if you are asking, you are about to touch the device, which
+# is the one thing an app must not do. No example in this repo needs it any more.
+tuish_hosted () { test "$_tuish_owns_dev" -eq 0; }
 
 # Register working vars as marshalled context fields. Each field's DEFAULT is
 # captured live from its current value, so a register call must follow the var's
@@ -346,10 +418,10 @@ _tuish_rgn_cols=0
 # never references an unset var under set -u.
 tuish_ctx_register ()
 {
-	local _n
-	for _n in "$@"
+	local _tuish_ctx_rn
+	for _tuish_ctx_rn in "$@"
 	do
-		_tuish_ctx_names="${_tuish_ctx_names} ${_n}"
+		_tuish_ctx_names="${_tuish_ctx_names} ${_tuish_ctx_rn}"
 	done
 	_tuish_ctx_recapture "$@"
 }
@@ -361,10 +433,10 @@ tuish_ctx_register ()
 # the pre-init placeholder captured at source time.
 _tuish_ctx_recapture ()
 {
-	local _n
-	for _n in "$@"
+	local _tuish_ctx_rn
+	for _tuish_ctx_rn in "$@"
 	do
-		eval "_tuish_ctx_dflt_${_n}=\$${_n}"
+		eval "_tuish_ctx_dflt_${_tuish_ctx_rn}=\$${_tuish_ctx_rn}"
 	done
 }
 
@@ -380,11 +452,116 @@ _tuish_ctx_defaults ()
 	done
 }
 
+# ─── App field sets: state that belongs to an INSTANCE ───────────
+# tuish_ctx_register above is the FRAMEWORK tier: one global list, marshalled for every
+# context that exists. That is right for framework state (every context has a viewport)
+# and wrong for an app's, for two reasons — every context would pay to marshal the
+# editor's cursor row, and worse, an app that wants to be mounted TWICE has nowhere to put
+# the second instance's state.
+#
+# That was a real limit, not a theoretical one: examples/editor.sh kept _cur_row, _view_top
+# and the rest as plain globals, so two editors in one page shared a cursor. The website
+# only ever opens one at a time, which is how it got away with it.
+#
+# So: a second tier. An app DECLARES a named set of fields once, at source time, and
+# ATTACHES it to whichever context it is running in.
+#
+#   tuish_ctx_declare _ed _cur_row _cur_col _view_top ...   # once, at source time
+#   _ed_setup () { tuish_init; tuish_ctx_fields _ed; ... }  # per instance
+#
+# DECLARATION IS AT SOURCE TIME, AND THAT IS THE WHOLE TRICK. The obvious design — capture
+# each field's default when it is attached — breaks on the exact case the feature exists
+# for: when editor #2 attaches, the live _cur_row is editor #1's cursor row, and #2 would
+# start life holding it. Declaring at source time captures the value the app itself wrote
+# in its own declarations, which is what a default IS.
+#
+# It also means _tuish_ctx_defaults never sees these fields, so unlike the framework tier
+# they cannot be wiped by a context creation that happens after registration.
+#
+# Storage: _tuish_ctxd_<SET> is the set's field list, _tuish_ctxf_<id> the sets attached to
+# context <id>. (Not _tuish_ctx_<id>__fields — that could collide with a field genuinely
+# named _fields.)
+# The prefixed locals are not fussiness. This runs at SOURCE time — that is the whole point
+# of it — which is before tuish_init, and therefore before compat.sh's tuish_fnfix has made
+# `local` mean local. On ksh93 these two ARE globals, and `_set` and `_n` are exactly the
+# names an app gives a loop counter. tuish_ctx_register (above) has the same constraint for
+# the same reason. See tests/unit/test_namespace.sh.
+tuish_ctx_declare ()   # $1 = set name, $2.. = field names
+{
+	local _tuish_cd_set=$1 _tuish_cd_n
+	shift
+	eval "_tuish_ctxd_${_tuish_cd_set}=\"\$*\""
+	for _tuish_cd_n in "$@"
+	do
+		eval "_tuish_ctxd_dflt_${_tuish_cd_n}=\$${_tuish_cd_n}"
+	done
+	return 0
+}
+
+# Attach declared set $1 to the ACTIVE context and reset its fields to their declared
+# defaults. Call it in your setup, after tuish_init has settled which context you are.
+#
+# Resetting on attach is not a convenience, it is required: the globals currently hold
+# whatever the LAST instance of this app left in them, and a fresh instance must not
+# inherit them. It is also what lets an app delete its own hand-written "fresh state each
+# launch" block — the framework knows the defaults, because the app declared them.
+tuish_ctx_fields ()   # $1 = set name
+{
+	local _cur='' _names='' _n
+	# An unknown set is an ERROR, not a no-op. Returning 0 here would mean a typo'd or
+	# not-yet-declared name silently attaches nothing: the fields never marshal, and two
+	# mounted instances of the app quietly go back to sharing their state — reproducing
+	# exactly the bug this tier exists to fix, with nothing on screen to say so. Under the
+	# `set -euf` every app in this repo runs with, returning 1 turns that into a startup
+	# failure, which is what it is.
+	eval "_names=\${_tuish_ctxd_${1}:-}"
+	test -n "$_names" || return 1
+	# No active context: the app called this before tuish_init. Same reasoning — and
+	# eval'ing the empty id would write to a variable literally named `_tuish_ctxf_`, which
+	# no save or load would ever read.
+	test -n "$_tuish_ctx_active" || return 1
+	eval "_cur=\${_tuish_ctxf_${_tuish_ctx_active}:-}"
+	case " $_cur " in
+		*" $1 "*) : ;;                                   # already attached; just reset
+		*) eval "_tuish_ctxf_${_tuish_ctx_active}=\"\${_cur:+\$_cur }\$1\"" ;;
+	esac
+	for _n in $_names
+	do
+		eval "${_n}=\$_tuish_ctxd_dflt_${_n}"
+	done
+	return 0
+}
+
+# The field names attached to context $1, flattened -> _tuish_ctx_extra ('' if none).
+# Out-var, not stdout: asking a question must not cost a fork.
+_tuish_ctx_extra=''
+_tuish_ctx_extras ()   # $1 = ctx id
+{
+	local _sets='' _s
+	_tuish_ctx_extra=''
+	eval "_sets=\${_tuish_ctxf_${1}:-}"
+	test -n "$_sets" || return 0
+	for _s in $_sets
+	do
+		eval "_tuish_ctx_extra=\"\${_tuish_ctx_extra:+\$_tuish_ctx_extra }\$_tuish_ctxd_${_s}\""
+	done
+	return 0
+}
+
 # Spill the active working set into frame $1 / fill the working set from frame $1.
+#
+# Both walk the base list AND whatever sets context $1 has attached. Both key off $1, so a
+# switch from A to B saves A's fields and loads B's — each context marshals exactly what it
+# owns, and a context that owns nothing extra pays one variable read.
 _tuish_ctx_save ()
 {
 	local _f
 	for _f in $_tuish_ctx_names
+	do
+		eval "_tuish_ctx_${1}_${_f}=\$${_f}"
+	done
+	_tuish_ctx_extras "$1"
+	for _f in $_tuish_ctx_extra
 	do
 		eval "_tuish_ctx_${1}_${_f}=\$${_f}"
 	done
@@ -393,6 +570,11 @@ _tuish_ctx_load ()
 {
 	local _f
 	for _f in $_tuish_ctx_names
+	do
+		eval "${_f}=\$_tuish_ctx_${1}_${_f}"
+	done
+	_tuish_ctx_extras "$1"
+	for _f in $_tuish_ctx_extra
 	do
 		eval "${_f}=\$_tuish_ctx_${1}_${_f}"
 	done
@@ -423,12 +605,44 @@ tuish_ctx_create ()
 	return 0
 }
 
-# Seat the ACTIVE context into the absolute rectangle (abs_row, abs_col, W, H) — the
-# one place that knows which fields a region is made of. Shared by
-# tuish_ctx_create_region (first seating) and tuish_ctx_reseat (re-seating) so the
-# field list is never duplicated; hosts used to hand-copy this block.
+# ─── Region vs viewport ──────────────────────────────────────────
+# These are two different rectangles, and collapsing them is the mistake that made the
+# root a special case in the first place.
 #
-# A region is THREE independent things, and keeping them apart is what lets a host
+#   REGION    the rectangle you OWN. Nothing you draw may leave it.
+#   VIEWPORT  the band you LAY OUT in. TUISH_VIEW_*.
+#
+# For a hosted child they coincide — a host hands you exactly one rectangle and it is both.
+# For the ROOT they do not: its region is the whole terminal, while its viewport is
+# whatever mode it asked for (a 10-row `fixed` band, a `grow` block that starts at zero
+# rows and lengthens a line at a time). A root that took its region from its viewport would
+# clip itself to nothing the moment it asked for `grow`, whose TUISH_VIEW_ROWS is 0 until
+# the first line is emitted.
+#
+# So the primitive underneath takes the clip EXPLICITLY, in logical cells, and never infers
+# it from the viewport.
+#
+# Seat the ACTIVE context into the absolute rectangle (abs_row, abs_col0, W, H), with a
+# base clip given in the context's own logical cells. The one place that knows which fields
+# a region is made of.
+_tuish_ctx_region ()   # $1=abs_row $2=abs_col0 $3=W $4=H $5=lrmin $6=lrmax $7=lcmin $8=lcmax
+{
+	_tuish_owns_dev=0        # seated into a region: by default the terminal is not ours
+	_tuish_rgn_top=$1
+	_tuish_rgn_left=$2
+	_tuish_rgn_rows=$4
+	_tuish_rgn_cols=$3
+	_tuish_base_lrmin=$5; _tuish_base_lrmax=$6
+	_tuish_base_lcmin=$7; _tuish_base_lcmax=$8
+	_tuish_tx_reset
+}
+
+# Seat the ACTIVE context into a region AND make that region its viewport — the hosted
+# case, where the two are the same rectangle. Shared by tuish_ctx_create_region (first
+# seating) and tuish_ctx_reseat (re-seating) so the field list is never duplicated; hosts
+# used to hand-copy this block.
+#
+# A hosted region is THREE independent things, and keeping them apart is what lets a host
 # scroll a live child under the edge of a pane:
 #
 #   layout size  TUISH_VIEW_ROWS/COLS  — how big the child THINKS it is. The child
@@ -449,11 +663,6 @@ _tuish_ctx_seat ()   # $1=abs_row $2=abs_col0 $3=W $4=H [$5=clip_row $6=clip_col
 	TUISH_VIEW_LEFT=$2
 	TUISH_VIEW_ROWS=$4
 	TUISH_VIEW_COLS=$3
-	_tuish_hosted=1
-	_tuish_rgn_top=$1
-	_tuish_rgn_left=$2
-	_tuish_rgn_rows=$4
-	_tuish_rgn_cols=$3
 
 	if test $# -ge 8
 	then
@@ -469,13 +678,10 @@ _tuish_ctx_seat ()   # $1=abs_row $2=abs_col0 $3=W $4=H [$5=clip_row $6=clip_col
 		test $_c0 -lt 1 && _c0=1
 		test $_r1 -gt $4 && _r1=$4
 		test $_c1 -gt $3 && _c1=$3
-		_tuish_base_lrmin=$_r0; _tuish_base_lrmax=$_r1
-		_tuish_base_lcmin=$_c0; _tuish_base_lcmax=$_c1
+		_tuish_ctx_region "$1" "$2" "$3" "$4" "$_r0" "$_r1" "$_c0" "$_c1"
 	else
-		_tuish_base_lrmin=1; _tuish_base_lrmax=$4
-		_tuish_base_lcmin=1; _tuish_base_lcmax=$3
+		_tuish_ctx_region "$1" "$2" "$3" "$4" 1 "$4" 1 "$3"
 	fi
-	_tuish_tx_reset
 }
 
 # Create AND activate a child context bound to a region of the CURRENTLY ACTIVE
@@ -607,6 +813,16 @@ tuish_ctx_destroy ()
 	do
 		eval "unset _tuish_ctx_${1}_${_f} 2>/dev/null" || :
 	done
+
+	# The app's own fields, and the record of which sets it had. Without this a mounted
+	# app's instance state outlives the app — and since ids are monotonic that is a slow
+	# leak in a host that mounts and drops children all day (the website does).
+	_tuish_ctx_extras "$1"
+	for _f in $_tuish_ctx_extra
+	do
+		eval "unset _tuish_ctx_${1}_${_f} 2>/dev/null" || :
+	done
+	eval "unset _tuish_ctxf_${1} 2>/dev/null" || :
 }
 
 # ─── Cooperative driving (non-modal hosting) ─────────────────────
@@ -668,12 +884,40 @@ _tuish_ctx_drive ()
 #
 # Use this for INPUT (keys, mouse, resize). For idle, use tuish_ctx_tick, which
 # honours each child's own tick rate instead of firing on every host tick.
+# A host routes events from INSIDE its own event handler, which the framework already runs
+# inside a frame (_tuish_parse_event's tuish_begin/tuish_end). So the host has a frame open
+# the whole time we are down in the child — and _tuish_buffering, the flag that decides
+# whether a write is buffered or goes straight to the terminal, is a per-context register.
+# The moment we activate the child, it reads 0, and everything the child emits leaves the
+# host's frame as a write of its own: the child's echoed keystroke, any device escape it
+# switches on, the autowrap reconcile in tuish_ctx_activate. Two writes, sometimes more,
+# where the toolkit promises one — and the escapes land ahead of chrome that was buffered
+# before them.
+#
+# HOLD is the answer to exactly this, and tuish_ctx_render and tuish_ctx_mount already use
+# it: it is device-global (there is one output stream), so it catches a flush from any
+# context, at any depth. Hold across the whole dispatch and every byte the child produces
+# folds into the host's frame, in order, and the repaint stays one write.
 tuish_ctx_dispatch ()
 {
 	local _host=$_tuish_ctx_active _raw=$TUISH_RAW
+	local _hostbuf=$_tuish_buffering
+	local _hold=0
+	if test "$_hostbuf" -gt 0 && test "$_tuish_holding" -eq 0
+	then _tuish_holding=1; _tuish_hold=''; _hold=1
+	fi
+
 	tuish_ctx_activate "$1"
 	_tuish_ctx_drive "$_raw"
 	tuish_ctx_activate "$_host"
+
+	if test "$_hold" -eq 1
+	then
+		_tuish_holding=0
+		_tuish_buf="${_tuish_buf}${_tuish_hold}"
+		_tuish_hold=''
+	fi
+	return 0
 }
 
 # Repaint mounted child $1 NOW: run its registered render handler at level -1 (full)
@@ -866,10 +1110,10 @@ tuish_ctx_register \
 	TUISH_CANVAS TUISH_CANVAS_W TUISH_CANVAS_H TUISH_CANVAS_CW TUISH_CANVAS_CH \
 	_tuish_canvas_on _tuish_canvas_r _tuish_canvas_c \
 	_tuish_mouse _tuish_detailed _tuish_modkeys _tuish_wrap \
-	_tuish_cursor_abs_row _tuish_cursor_vrow _tuish_cursor_vcol \
+	_tuish_cursor_abs_row _tuish_cursor_vrow _tuish_cursor_vcol _tuish_cursor_shape \
 	TUISH_EVENT TUISH_EVENT_KIND TUISH_RAW \
 	TUISH_MOUSE_X TUISH_MOUSE_Y TUISH_MOUSE_ABS_Y \
-	_tuish_hosted _tuish_rgn_top _tuish_rgn_left _tuish_rgn_rows _tuish_rgn_cols \
+	_tuish_owns_dev _tuish_rgn_top _tuish_rgn_left _tuish_rgn_rows _tuish_rgn_cols \
 	_tuish_idle_timeout _tuish_idle_chunk _tuish_idle_chunks TUISH_TICK_US _tuish_tick_acc \
 	_tuish_interval_s \
 	_tuish_ctx_parent
@@ -1123,31 +1367,31 @@ _tuish_init_term ()
 	# contiguously, so only the first byte waits; a tty that never answers (a pipe,
 	# CI) gives up after one per-byte timeout. Native startup is unchanged.
 	tuish_update_size
-	local _newx=0 _newy=0
+	local _tuish_it_newx=0 _tuish_it_newy=0
 	_tuish_write '\033[6n\r'
 	if type _tuish_get_byte >/dev/null 2>&1
 	then
-		local _cst=0 _crow='' _ccol=''
+		local _tuish_it_cst=0 _tuish_it_crow='' _tuish_it_ccol=''
 		while _tuish_get_byte -t0.5
 		do
-			case $_cst in
+			case $_tuish_it_cst in
 				0) _tuish_ord "$_tuish_byte"
-				   test $_tuish_code -eq 27 && _cst=1 ;;
-				1) case "$_tuish_byte" in '[') _cst=2 ;; *) _cst=0 ;; esac ;;
+				   test $_tuish_code -eq 27 && _tuish_it_cst=1 ;;
+				1) case "$_tuish_byte" in '[') _tuish_it_cst=2 ;; *) _tuish_it_cst=0 ;; esac ;;
 				2) case "$_tuish_byte" in
-				       [0-9]) _crow="${_crow}${_tuish_byte}" ;;
-				       ';') _cst=3 ;;
-				       *) _cst=0; _crow='' ;;
+				       [0-9]) _tuish_it_crow="${_tuish_it_crow}${_tuish_byte}" ;;
+				       ';') _tuish_it_cst=3 ;;
+				       *) _tuish_it_cst=0; _tuish_it_crow='' ;;
 				   esac ;;
 				3) case "$_tuish_byte" in
-				       [0-9]) _ccol="${_ccol}${_tuish_byte}" ;;
-				       R) test -n "$_crow" && _newx=$_crow; test -n "$_ccol" && _newy=$_ccol; break ;;
-				       *) _cst=0; _crow=''; _ccol='' ;;
+				       [0-9]) _tuish_it_ccol="${_tuish_it_ccol}${_tuish_byte}" ;;
+				       R) test -n "$_tuish_it_crow" && _tuish_it_newx=$_tuish_it_crow; test -n "$_tuish_it_ccol" && _tuish_it_newy=$_tuish_it_ccol; break ;;
+				       *) _tuish_it_cst=0; _tuish_it_crow=''; _tuish_it_ccol='' ;;
 				   esac ;;
 			esac
 		done
 	fi
-	TUISH_INIT_ROW=$_newx
+	TUISH_INIT_ROW=$_tuish_it_newx
 
 	# Focus events (mouse tracking is off by default; use tuish_mouse_on)
 	_tuish_write '\033[?1004h'   # focus events
@@ -1158,11 +1402,11 @@ _tuish_init_term ()
 
 	# Set tab stops
 	_tuish_write '\033[3g'
-	local _tcont=0
-	while test $_tcont -lt ${TUISH_COLUMNS}
+	local _tuish_it_tcont=0
+	while test $_tuish_it_tcont -lt ${TUISH_COLUMNS}
 	do
 		_tuish_write '\033['"${TUISH_TABSIZE}"'C\033H'
-		_tcont=$((_tcont + TUISH_TABSIZE))
+		_tuish_it_tcont=$((_tuish_it_tcont + TUISH_TABSIZE))
 	done
 	_tuish_write '\r'
 }
@@ -1178,6 +1422,15 @@ _tuish_device_init ()
 
 tuish_init ()
 {
+	# Make `local` mean local (compat.sh). A no-op on every shell but ksh93, where it is
+	# what stops a framework helper's scratch variable from overwriting a caller's.
+	#
+	# HERE, and not at the bottom of a module, because it has to run once EVERYTHING is
+	# defined — every tuish module the app chose to source, and the app's own functions
+	# too. tuish_init is the first moment that is guaranteed to be true, and it is on the
+	# fixup's own skip list, so it can safely rewrite the others while it is running.
+	tuish_fnfix
+
 	if test "$_tuish_initialized" -eq 1
 	then
 		# Device already up — we are nested inside a host. Adopt the context the
@@ -1220,9 +1473,9 @@ tuish_fini ()
 		# this is its one reliable teardown point.
 		test -n "$_tuish_fini_fn" && { "$_tuish_fini_fn" || :; }
 		_tuish_on_fini
-		local _cur="$_tuish_ctx_active" _p="$_tuish_ctx_parent"
-		test -n "$_p" && tuish_ctx_activate "$_p"
-		tuish_ctx_destroy "$_cur"
+		local _tuish_f_cur="$_tuish_ctx_active" _tuish_f_p="$_tuish_ctx_parent"
+		test -n "$_tuish_f_p" && tuish_ctx_activate "$_tuish_f_p"
+		tuish_ctx_destroy "$_tuish_f_cur"
 		return 0
 	fi
 
@@ -1278,7 +1531,15 @@ tuish_fini ()
 	fi
 	_tuish_write '\033[20h'      # LNM (ANSI mode 20) set: restore newline mode
 	_tuish_write '\033[23;0;0t'  # pop title
-	_tuish_write '\033[0 q'   # DECSCUSR: restore default cursor shape
+	# DECSCUSR: put the caret back, but only if we ever took it. A reader who configured a
+	# bar caret in their own terminal should not get a block back from an app that never had
+	# an opinion about it — and this is the ONE place that emits DECSCUSR 0, because it is
+	# the one place where "restore the default" is what it means.
+	if test "$_tuish_cursor_shape_set" -eq 1
+	then _tuish_write '\033[0 q'
+	fi
+	_tuish_cursor_shape_dev=''
+	_tuish_cursor_shape_set=0
 	tuish_show_cursor
 
 	# Restore stty: prefer the exact saved state so a faithful snapshot

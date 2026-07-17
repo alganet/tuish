@@ -27,6 +27,13 @@ TESTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 . "$TESTS_DIR/../src/keybind.sh"
 . "$TESTS_DIR/../src/host.sh"
 
+
+# Exercise the SHIPPED configuration. tuish_fnfix normally fires from tuish_init, which unit
+# tests deliberately never call (they stub the device) — so without this, every suite here
+# would validate the framework with its ksh `local` still leaking, i.e. not the library that
+# actually runs. It is a no-op on every shell whose `local` already works.
+command -v tuish_fnfix >/dev/null 2>&1 && tuish_fnfix
+
 printf 'Unit tests: hosting (src/host.sh)\n'
 
 TUISH_LINES=30
@@ -296,5 +303,60 @@ tuish_host_commit
 tuish_host_ctx alpha; _ctx_a=$TUISH_HOST_CTX
 assert_eq "$(test -n "$_ctx_a" && echo yes)" "yes" \
 	"pane: with no pane there is nothing to be off the edge of — the child stays"
+
+# --- The caret's shape is negotiated by PAINT ORDER ---------------------------
+# The focused child paints last so the caret ends the frame where you are typing. The shape
+# rides with the caret, so it inherits that ordering for nothing: whichever child shows the
+# caret last says what it looks like. No host API is involved, and that is the point.
+_captured=''
+_tuish_out () { _captured="${_captured}${1:-}"; }
+
+_a_paint () { _paints="$_paints a"; tuish_cursor_shape 2; tuish_cursor 1 1; }   # block
+_b_paint () { _paints="$_paints b"; tuish_cursor_shape 6; tuish_cursor 1 1; }   # bar
+
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 3 2  20 4
+tuish_host_slot beta  _b_setup '' 3 24 12 4
+tuish_host_commit
+
+_last_shape ()   # the DECSCUSR the frame LEAVES the terminal in -> _shape
+{
+	local _rest="$1" _seg
+	_shape=''
+	while test -n "$_rest"
+	do
+		case "$_rest" in
+			*" q"*) _seg="${_rest%%" q"*}"      # everything before the next DECSCUSR
+			        _shape="${_seg#"${_seg%?}"}"   # ... its last char: the shape digit
+			        _rest="${_rest#*" q"}";;
+			*) break;;
+		esac
+	done
+}
+
+_captured=''; _tuish_cursor_shape_dev=''
+tuish_host_focus beta
+tuish_begin; tuish_host_paint; tuish_end
+_last_shape "$_captured"
+assert_eq "$_shape" "6" "caret: the FOCUSED child's shape is the one the frame ends with"
+
+_captured=''; _tuish_cursor_shape_dev=''
+tuish_host_focus alpha
+tuish_begin; tuish_host_paint; tuish_end
+_last_shape "$_captured"
+assert_eq "$_shape" "2" "caret: ... and it follows the focus"
+
+# A child that unmounts must not reset the caret DEVICE-WIDE. It used to: the editor put a
+# shape reset in its fini hook, and host.sh runs that hook on every unmount — so leaving one
+# snippet's editor turned the caret to a block under another one still being typed into.
+_captured=''
+tuish_host_begin
+tuish_host_slot alpha _a_setup '' 3 2 20 4     # beta is gone
+tuish_host_commit
+case "$_captured" in
+	*" q"*) _r=reset;;
+	*) _r=quiet;;
+esac
+assert_eq "$_r" "quiet" "caret: unmounting a child touches nobody else's caret"
 
 test_summary

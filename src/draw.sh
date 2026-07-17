@@ -136,8 +136,8 @@ _tuish_draw_u_dl_cross='\xE2\x95\xAA'  # ╪ U+256A  single vert + dbl horiz
 
 _tuish_draw_detect_unicode ()
 {
-	local _loc="${_tuish_draw_orig_lc_all}${_tuish_draw_orig_lc_ctype}${_tuish_draw_orig_lang}"
-	case "$_loc" in
+	local _tuish_draw_loc="${_tuish_draw_orig_lc_all}${_tuish_draw_orig_lc_ctype}${_tuish_draw_orig_lang}"
+	case "$_tuish_draw_loc" in
 		*[Uu][Tt][Ff][-_]8*|*[Uu][Tt][Ff]8*) TUISH_DRAW_BACKEND='unicode';;
 	esac
 }

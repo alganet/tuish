@@ -27,14 +27,28 @@ _tuish_held=''
 # Mouse press→release tracking is per-context.
 tuish_ctx_register _tuish_held
 
-# Teardown hook called by tuish_fini (stubbed in tui.sh): turn off mouse
-# tracking if it was on, so fini need not read HID-private state directly.
+# Teardown hook called by tuish_fini (stubbed in tui.sh): put back whatever HID state
+# was ever switched on, so fini need not read HID-private state directly.
+#
+# Every test here gates on the DEVICE flag, never on the active context's field. By the
+# time we run, the app that asked for the escape may be long gone — a child enables mouse
+# tracking, the host unmounts it, its frame is destroyed, and the root (whose _tuish_mouse
+# was always 0) is active. Consulting the context field would emit nothing and leak SGR
+# mouse reports into the user's shell after exit. The _dev flag remembers.
 _tuish_hid_fini ()
 {
-	# Gate on the DEVICE flag, not the active context's _tuish_mouse: on teardown
-	# the mouse-enabling context (a child) may no longer be active, but the escape
-	# is still live on the terminal and must be turned off.
 	if test "${_tuish_mouse_dev:-0}" -eq 1; then tuish_mouse_off; fi
+
+	# The escape, not tuish_detailed_off: that one re-checks TUISH_PROTOCOL, and by the
+	# time we run tuish_fini has already restored the protocol to 'vt' — so the call
+	# would silently do nothing. _tuish_detailed_dev is only ever set under kitty in the
+	# first place, so it IS the guard.
+	if test "${_tuish_detailed_dev:-0}" -eq 1
+	then
+		_tuish_write '\033[=9u'
+		_tuish_detailed_dev=0
+		_tuish_detailed=0
+	fi
 }
 
 # ─── Keyboard protocol ──────────────────────────────────────────
@@ -111,6 +125,7 @@ tuish_detailed_on ()
 	if test "$TUISH_PROTOCOL" = 'kitty'
 	then
 		_tuish_write '\033[=11u'
+		_tuish_detailed_dev=1   # device: the kitty flag is now set on the terminal
 	fi
 }
 
@@ -119,6 +134,7 @@ tuish_detailed_off ()
 	if test "$TUISH_PROTOCOL" = 'kitty'
 	then
 		_tuish_write '\033[=9u'
+		_tuish_detailed_dev=0
 	fi
 	_tuish_detailed=0
 }

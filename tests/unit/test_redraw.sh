@@ -18,6 +18,13 @@ TESTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 . "$TESTS_DIR/../src/event.sh"
 . "$TESTS_DIR/../src/hid.sh"
 
+
+# Exercise the SHIPPED configuration. tuish_fnfix normally fires from tuish_init, which unit
+# tests deliberately never call (they stub the device) — so without this, every suite here
+# would validate the framework with its ksh `local` still leaking, i.e. not the library that
+# actually runs. It is a no-op on every shell whose `local` already works.
+command -v tuish_fnfix >/dev/null 2>&1 && tuish_fnfix
+
 _captured=''
 _tuish_out () { _captured="${_captured}${1:-}"; }
 _event_log=''
@@ -281,5 +288,49 @@ _tuish_parse_event "C a"
 assert_eq "$_redraw_count" "0" "pending byte: render deferred"
 assert_eq "$_tuish_pending_byte" "x" "pending byte: saved byte not clobbered"
 assert_eq "$_tuish_redraw_requested" "1" "pending byte: request stays pending"
+
+# --- The discarded frame must not take device state with it ---------------------
+# A deferred redraw supersedes whatever the handler drew, so the handler's frame CONTENT
+# is thrown away. Anything a handler wrote as bytes went with it — which is exactly how a
+# hosted editor lost its bar caret: it emitted the shape while being mounted, inside the
+# handler, and the render that followed re-showed the caret without ever re-declaring what
+# it looked like. The shape is a DECLARATION now, so it is a variable and survives; and the
+# cache of what the device has must be forgotten, because those bytes never landed.
+# The captured bytes are what the WRITER was handed, before the flush expands them — so
+# match on the escape-agnostic tail, "[6 q", not on a literal ESC.
+TUISH_LINES=24; TUISH_COLUMNS=80          # tuish_vmove clips against these
+TUISH_VIEW_ROWS=24; TUISH_VIEW_COLS=80
+
+# The handler mounts something that declares a bar and asks for a redraw. The render is the
+# frame that actually reaches the terminal, and the caret in it must be a bar.
+tuish_on_event  () { tuish_cursor_shape 6; _tuish_write 'THROWN AWAY'; tuish_request_redraw 2; }
+tuish_on_redraw () { tuish_cursor 1 1; }
+
+reset_state
+_tuish_cursor_shape=''
+_tuish_cursor_shape_dev=''
+_tuish_parse_event "C a"
+case "$_captured" in
+	*"THROWN AWAY"*) _r=kept;;
+	*) _r=discarded;;
+esac
+assert_eq "$_r" "discarded" "the handler's content is superseded by the redraw, as before"
+case "$_captured" in
+	*'[6 q'*) _r=yes;;
+	*) _r=no;;
+esac
+assert_eq "$_r" "yes" "the caret's SHAPE survives the discard — it is state, not bytes"
+
+# And the device cache may not claim bytes that were thrown away: pretend the terminal
+# already had the bar, discard a frame, and the render must still re-assert it.
+reset_state
+_tuish_cursor_shape=''
+_tuish_cursor_shape_dev=6
+_tuish_parse_event "C a"
+case "$_captured" in
+	*'[6 q'*) _r=yes;;
+	*) _r=no;;
+esac
+assert_eq "$_r" "yes" "a discarded frame forgets what the device was told it had"
 
 test_summary
