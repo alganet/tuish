@@ -182,6 +182,37 @@ coalesces the same way a burst of plain characters does.
 | `tuish_cancel_redraw`          | Cancel a pending redraw request                                |
 | `tuish_has_pending_input`      | Check if more input is queued (returns 0 if pending, 1 if not) |
 
+### The deferral is bounded
+
+"Input is pending" is a zero-timeout peek. It does not say a burst is *coming* -- it says
+you are **behind**: a byte is already buffered. Deferring on that with no limit is a
+livelock. Once one frame costs more than the terminal's autorepeat interval, bytes queue
+faster than they drain, the peek never comes back empty, and the screen is withheld until
+the key is **released**.
+
+So the deferral spends a budget, and two rules bound it:
+
+- **An idle event never defers.** `idle` *means* the input was exhausted -- the reader let
+  a whole interval elapse to produce it -- so a byte landing while your handler ran does
+  not undo the wait already paid.
+- **At most `TUISH_DEFER_MAX` events are held back** (default `8`), then the frame paints
+  regardless.
+
+| Variable           | Default | Description                                          |
+|--------------------|---------|------------------------------------------------------|
+| `TUISH_DEFER_MAX`  | `8`     | Events a pending redraw may be held across (launcher config) |
+
+The budget is a **trade**, not a free win, and the direction that bites is the unobvious
+one: each forced render costs a frame the backlog must then chew through, so too *small* a
+budget drains slower than input arrives -- the queue grows without bound and letting go of
+the key leaves the app still acting on it a second later. Keep it above
+`autorepeat_rate x frame_cost`; at a typical ~30/s that makes `8` good for a 266ms frame.
+Around `4` it inverts.
+
+This is what makes `tuish_request_redraw` safe for a real-time app. It was not, before:
+a game that asked for a deferred redraw simply froze while a key was held, which is why
+`examples/game.sh` paints directly into the frame instead.
+
 ### Redraw levels
 
 The level argument tells `tuish_on_redraw` how much work to do:
