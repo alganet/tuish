@@ -148,7 +148,7 @@ _coop_render ()
 
 	# The focused box gets the bright border — the whole point of having a focus model.
 	local _clkfg=$C_BORDER _edfg=$C_BORDER
-	case "$(tuish_host_focus)" in
+	case "$TUISH_HOST_FOCUS" in
 		clock)  _clkfg=$C_ACCENT;;
 		editor) _edfg=$C_ACCENT;;
 	esac
