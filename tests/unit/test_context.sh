@@ -259,4 +259,37 @@ _writes=0
 tuish_ctx_render "$_w1"
 assert_eq "$_writes" "1" "frame: with no host frame open, a child render writes on its own"
 
+# --- Frames NEST --------------------------------------------------------------
+# The framework opens a frame before it calls your code and puts things in it — the caret
+# hide that precedes every deferred render, for one. An app that buffers inside its own
+# render handler (every host does) used to reset the buffer and throw those away.
+_writes=0
+_tuish_buffering=0; _tuish_buf=''
+
+tuish_begin                                    # the framework's frame
+tuish_text 1 1 'outer'
+tuish_begin                                    # the app's own frame, inside it
+tuish_text 2 1 'inner'
+tuish_end                                      # ... does NOT flush, and does NOT reset
+assert_eq "$_writes" "0" "nesting: an inner tuish_end does not write"
+case "$_tuish_buf" in
+	*outer*inner*) assert_eq ok ok "nesting: an inner tuish_begin does not discard the outer frame";;
+	*) assert_eq "$_tuish_buf" "outer...inner" \
+		"nesting: an inner tuish_begin does not discard the outer frame";;
+esac
+tuish_end
+assert_eq "$_writes" "1" "nesting: the outermost tuish_end is the one that writes"
+
+# End-without-begin is clamped, not an underflow: one unbalanced app must not wedge the
+# loop into never flushing again (a permanently frozen screen).
+_writes=0
+tuish_end
+tuish_end
+assert_eq "$_tuish_buffering" "0" "nesting: tuish_end below depth 0 clamps rather than underflowing"
+tuish_begin
+tuish_text 1 1 'after'
+tuish_end
+assert_eq "$_writes" "1" "nesting: ... and the next frame still flushes"
+_tuish_buffering=0; _tuish_buf=''
+
 test_summary

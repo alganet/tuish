@@ -58,6 +58,26 @@ and flushed after the handler returns.
 to the terminal immediately, before the deferred redraw check runs. This
 is useful for latency-sensitive updates (see [event.md](event.md#immediate-rendering)).
 
+### Frames nest
+
+`tuish_begin`/`tuish_end` are a **depth counter**, not a flag. Only the outermost pair
+does anything: the inner `tuish_begin` does not reset the buffer, and the inner
+`tuish_end` does not write.
+
+That is what lets you buffer inside your own render handler without cutting somebody
+else's frame in half. The framework opens a frame *before* it calls you, and puts things
+in it -- the caret hide that precedes every deferred render, for one. Without nesting, an
+app that called `tuish_begin` in its render handler silently threw that away, and the
+caret stayed on, blinking wherever the last cell was drawn.
+
+`tuish_flush` is the exception: it writes what has accumulated **now**, at any depth, and
+leaves the frame open. That is the whole point of it (an editor echoing a keystroke ahead
+of its deferred redraw) -- but note it flushes the *whole* frame, chrome and all, not just
+your part of it.
+
+`tuish_end` below depth zero is a no-op, not an underflow, so one unbalanced app cannot
+wedge the loop into never flushing again.
+
 ## Cursor Basics
 
 | Function               | Description                        |
@@ -67,6 +87,11 @@ is useful for latency-sensitive updates (see [event.md](event.md#immediate-rende
 | `tuish_save_cursor`    | Save cursor position (DECSC)       |
 | `tuish_restore_cursor` | Restore cursor position (DECRC)    |
 | `tuish_reset_scroll`   | Reset scroll region to full screen |
+
+The caret is **re-declared every frame**. The framework hides it before each deferred
+render; a render handler that wants one calls `tuish_cursor R C`, which places and shows
+it. Draw nothing that shows it and there is no caret -- which is what you want for a
+document, and what you do not want to discover by accident.
 
 For full cursor movement, shapes, and drawing primitives, see [term.md](term.md).
 
