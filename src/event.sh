@@ -37,6 +37,33 @@ _tuish_raf_defers=0
 # driving four children must not spend one budget across all four.
 tuish_ctx_register _tuish_redraw_requested _tuish_redraw_level _tuish_raf_defers
 
+# ─── The starved clock ───────────────────────────────────────────
+# Complete events dispatched since the last idle actually fired.
+#
+# An idle event is not a timer — it is the reader's `read -t<interval>` TIMING OUT. So the
+# tick fires while a key is held if and only if the idle interval is SHORTER than the
+# terminal's autorepeat interval. Above it, a byte is always waiting before the timeout
+# lands, the read never times out, and a real-time app's clock stops dead for as long as the
+# key is down. Nothing announced that constraint, and the margin is thin: the platformer
+# polls at 20ms against a typical ~33ms autorepeat, and `xset r rate 250 50` erases it.
+#
+# So count. Healthy interleaving is `idle, byte, idle, byte` and the count never passes 1 —
+# a burst tick never fires and the clock is exactly what it always was. Reaching 2 means two
+# complete events with NO read timeout between them, which IS the definition of a starved
+# tick, so we owe one. 1 would fire after every byte in the healthy case and double the rate.
+#
+# This buys LIVENESS, not fidelity. Under starvation the tick fires per-N-events rather than
+# per-wall-ms, so game-time dilates — fast where the interval is coarse, slow where the
+# autorepeat is. It never STOPS, which is what it did before. Real fidelity needs a wall
+# clock, and reading one costs a fork per tick on the shells this targets; the accumulator
+# stays the clock, and this bounds how wrong it can get.
+#
+# DEVICE-global: it describes the input stream, like _tuish_pending_byte. It also has to
+# outlive a loop iteration, so it could not be one of tuish_run's locals in any case — and
+# tuish_run is permanently on tuish_fnfix's skip list, where `local` is a global on ksh93
+# forever.
+_tuish_burst=0
+
 # ─── The rAF peek inhibit ────────────────────────────────────────
 # "Do not peek at the input right now: the next sequence's ESC byte has already been
 # read, so a peek would eat its body."
@@ -500,6 +527,7 @@ tuish_run ()
 {
 	_tuish_quit=''
 	_tuish_quit_mode=''
+	_tuish_burst=0
 
 	# Fire initial idle event so the app can render before waiting for input
 	_tuish_parse_event "F"
@@ -542,9 +570,25 @@ tuish_run ()
 			# Fall through to process the companion byte
 		elif test "${_tuish_noinput:-no}" = "yes"
 		then
+			# The read timed out: the clock is healthy, so the burst owes nothing.
+			_tuish_burst=0
 			_tuish_parse_event "F"
 			_tuish_noinput=no
 			continue
+		fi
+
+		# A real byte, and we are between complete events — the escape FSM below reads its
+		# own body, so this is the only point in the loop guaranteed not to be mid-sequence.
+		# An idle injected here lands cleanly between two events; injected inside the FSM it
+		# would split an ESC from its body.
+		#
+		# Count EVENTS, not bytes: an arrow key is three bytes and one iteration, so a held
+		# arrow banks the same credit as a held letter.
+		_tuish_burst=$(( _tuish_burst + 1 ))
+		if test "$_tuish_burst" -ge "${TUISH_BURST_MAX:-2}"
+		then
+			_tuish_burst=0
+			_tuish_parse_event "F"
 		fi
 
 		_tuish_ord "${_tuish_byte}"
