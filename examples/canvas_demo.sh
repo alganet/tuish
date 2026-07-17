@@ -201,7 +201,9 @@ _cd_setup ()
 	tuish_bind 'ctrl-w'  '_cd_q'
 	tuish_bind 'char q'  '_cd_q'
 	tuish_bind 'resize'  'tuish_request_redraw'
-	tuish_bind '*'       ':'
+	# tuish_pass, not ':' — ':' would silently EAT every event a host offers us,
+	# including a wheel we have no binding for, and the host would stop scrolling.
+	tuish_bind '*'       'tuish_pass'
 
 	tuish_viewport fixed $(( _cd_BOX_R + _cd_BOX_H ))
 	_cd_render
