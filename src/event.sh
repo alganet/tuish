@@ -26,9 +26,16 @@ _tuish_event_loaded=1
 
 _tuish_redraw_requested=0
 _tuish_redraw_level=0
+# How many times running this context's pending frame has been held back. Bounds the
+# deferral so a sustained burst cannot withhold the screen indefinitely; see the rAF
+# check in _tuish_parse_event for why it has to be bounded at all, and why the bound
+# has a floor as well as a ceiling.
+_tuish_raf_defers=0
 
-# The redraw scheduler is per-context (a nested child renders on its own clock).
-tuish_ctx_register _tuish_redraw_requested _tuish_redraw_level
+# The redraw scheduler is per-context (a nested child renders on its own clock). The defer
+# count goes with it: it measures how long THIS context's frame has been owed, and a host
+# driving four children must not spend one budget across all four.
+tuish_ctx_register _tuish_redraw_requested _tuish_redraw_level _tuish_raf_defers
 
 # ─── The rAF peek inhibit ────────────────────────────────────────
 # "Do not peek at the input right now: the next sequence's ESC byte has already been
@@ -71,6 +78,10 @@ tuish_cancel_redraw ()
 {
 	_tuish_redraw_requested=0
 	_tuish_redraw_level=0
+	# Cancelling ends this frame's wait, so the next request starts its budget fresh.
+	# Deliberately NOT reset in tuish_request_redraw: re-requesting a frame that is still
+	# pending is exactly the thing being counted.
+	_tuish_raf_defers=0
 }
 
 # ─── Render / event handlers, referenced by name per context ─────
@@ -268,20 +279,57 @@ _tuish_parse_event ()
 		# so they are simply gone, and only the host's own device setup covers for them. A
 		# child should not be setting device modes; see docs/hosting.md.
 		_tuish_cursor_shape_dev=''
-		if test "${_tuish_raf_inhibit:-0}" -eq 1 || tuish_has_pending_input
+
+		# Hold this frame back? Three clauses, and the last two are the interesting ones.
+		#
+		# An IDLE never holds. Idle MEANS the input was exhausted — _tuish_idle_wait let a
+		# whole interval elapse with nothing arriving to produce this event, so a byte that
+		# lands while the handler runs does not undo the wait we already paid. It is also the
+		# safest place to render: not testing means not PEEKING, and the peek is the only
+		# thing here that can reorder a byte. It cannot race the inhibit either — that flag is
+		# raised only around a half-read sequence, a signal, and a paste marker, none of which
+		# dispatch an idle.
+		#
+		# Ask _class, not TUISH_EVENT_KIND, and the cheap reason is not the good one. Cheap:
+		# _class is already in hand, so an app that never defers a redraw pays nothing —
+		# latching the kind before the handler instead cost ~8% of EVERY dispatch, on the one
+		# path this toolkit cannot afford to tax. Good: _class is the descriptor we were woken
+		# by, and no handler can reach it. TUISH_EVENT_KIND is a context field, i.e. whatever
+		# the handler last left lying there.
+		#
+		# And the hold is BOUNDED. "Input is pending" is a -t0 peek: it does not say a burst
+		# is coming, it says we are BEHIND — a byte is already buffered. Unbounded, that is a
+		# livelock. A frame costing more than the terminal's autorepeat interval lets bytes
+		# queue faster than they drain, so the peek never comes back empty and the screen
+		# stays withheld until the key is RELEASED. Every app has this; a real-time one just
+		# meets it first.
+		#
+		# The budget is a TRADE, and the direction that bites is the unobvious one: each
+		# forced render costs a frame the backlog must then chew through, so too SMALL a
+		# budget drains slower than input arrives — the queue grows without bound and letting
+		# go of the key leaves the app still acting on it a second later. Keep it above
+		# autorepeat_rate x frame_cost: at VT's ~30/s, 8 carries a 266ms frame, as slow as our
+		# slowest target renders. Around 4 it inverts. Spending it past _tuish_raf_inhibit is
+		# safe and looks like it is not — inhibit stops the PEEK from eating a sequence body,
+		# and rendering never peeks. It writes.
+		if test "$_class" != 'F' &&
+		   { test "${_tuish_raf_inhibit:-0}" -eq 1 || tuish_has_pending_input ;} &&
+		   test "$_tuish_raf_defers" -lt "${TUISH_DEFER_MAX:-8}"
 		then
-			# More input in flight — leave the redraw pending. When
-			# inhibit is set, the next sequence's ESC byte was already
-			# read, so peeking would eat its body; a later dispatch
-			# with the peek allowed (burst-final timeout path, or an
+			# More input in flight — leave the redraw pending. When inhibit is set, the
+			# next sequence's ESC byte was already read, so peeking would eat its body;
+			# a later dispatch with the peek allowed (burst-final timeout path, or an
 			# idle event) fires the redraw.
-			:
+			_tuish_raf_defers=$(( _tuish_raf_defers + 1 ))
 		else
-			# Input exhausted — render now. The caret is re-declared every frame: we
-			# hide it here, and a handler that wants one calls tuish_cursor, which
-			# shows it again. Because frames nest, that hide now survives a render
-			# handler opening a frame of its own — which is what every host does, and
-			# which used to throw it away.
+			_tuish_raf_defers=0
+			# Render now: the input is exhausted, or we were woken by an idle, or the
+			# budget above ran out and the frame is owed regardless.
+			#
+			# The caret is re-declared every frame: we hide it here, and a handler that
+			# wants one calls tuish_cursor, which shows it again. Because frames nest,
+			# that hide now survives a render handler opening a frame of its own — which
+			# is what every host does, and which used to throw it away.
 			_tuish_redraw_requested=0
 			local _level=$_tuish_redraw_level
 			_tuish_redraw_level=0
