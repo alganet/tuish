@@ -58,19 +58,39 @@ _tuish_tui_loaded=1
 _tuish_buf=''
 _tuish_buffering=0
 
+# The one door to the terminal. _tuish_buf is a per-context frame, so a host cannot
+# simply buffer "everything that happens" — the moment it activates a child, it is
+# looking at the CHILD's buffer, and the child's own tuish_end writes straight out.
+# That is fine for a child running its own loop, and wrong for a host assembling one
+# frame: mounting three widgets inside a host repaint would emit three extra writes,
+# and the terminal would draw each one.
+#
+# HOLD catches every flush, from any context, into one string. It is device-global on
+# purpose: it is about the output stream, which there is only one of. tuish_ctx_mount
+# uses it to fold a child's first paint into the host's frame.
+_tuish_holding=0
+_tuish_hold=''
+_tuish_sink ()
+{
+	if test $_tuish_holding -eq 1
+	then _tuish_hold="${_tuish_hold}${1:-}"
+	else _tuish_out "${1:-}"
+	fi
+}
+
 _tuish_write ()
 {
 	if test $_tuish_buffering -eq 1
 	then
 		_tuish_buf="${_tuish_buf}${1:-}"
 	else
-		_tuish_out "${1:-}"
+		_tuish_sink "${1:-}"
 	fi
 }
 
 tuish_begin ()          { _tuish_buffering=1; _tuish_buf=''; }
-tuish_end ()            { test -n "$_tuish_buf" && _tuish_out "$_tuish_buf"; _tuish_buf=''; _tuish_buffering=0; }
-tuish_flush ()          { test -n "$_tuish_buf" && _tuish_out "$_tuish_buf"; _tuish_buf=''; }
+tuish_end ()            { test -n "$_tuish_buf" && _tuish_sink "$_tuish_buf"; _tuish_buf=''; _tuish_buffering=0; }
+tuish_flush ()          { test -n "$_tuish_buf" && _tuish_sink "$_tuish_buf"; _tuish_buf=''; }
 
 # Repeat string $1 exactly $2 times into _tuish_rep. O(log n) via doubling.
 # Shared primitive in the base module: str.sh (tuish_str_repeat) and term.sh
@@ -585,14 +605,28 @@ tuish_ctx_dispatch ()
 # rectangle immediately instead of waiting for its next idle tick — at a lazy interval
 # that would leave a visibly stale or torn widget on screen for a whole tick while the
 # user scrolls. Requires event.sh (the render-handler indirection lives there).
+#
+# If the HOST is buffering when it calls this, the child's output is spliced into the
+# host's frame rather than written on its own. That is what makes a host repaint atomic:
+# a page with four live widgets otherwise emits five separate writes, and the terminal
+# draws each one — you see the prose land at the new scroll offset while the widgets are
+# still at the old, a frame at a time. One buffer, one write, one frame.
+#
+# The child's output goes in at the point the host called from, so a host that fills its
+# background first and renders its children last still gets that order.
 tuish_ctx_render ()
 {
-	local _host=$_tuish_ctx_active
+	local _host=$_tuish_ctx_active _hostbuf=$_tuish_buffering
 	tuish_ctx_activate "$1"
 	tuish_begin
 	"${_tuish_render_fn:-tuish_on_redraw}" -1
-	tuish_end
+	local _out=$_tuish_buf
+	_tuish_buf=''; _tuish_buffering=0
 	tuish_ctx_activate "$_host"
+	if test "$_hostbuf" -eq 1
+	then _tuish_buf="${_tuish_buf}${_out}"
+	else test -n "$_out" && _tuish_out "$_out"
+	fi
 	return 0
 }
 
@@ -679,6 +713,17 @@ tuish_ctx_mount ()
 	shift 5
 	local _host=$_tuish_ctx_active
 
+	# If the host is mid-frame, the child's setup paint belongs IN that frame, not in a
+	# write of its own — otherwise the widget appears a frame before the page around it,
+	# which is exactly the flash you see when a host mounts something in response to a
+	# click. Hold everything the child emits and hand it to the host below. (Only the
+	# outermost mount holds: a nested one must not reset the buffer it is accumulating
+	# into.)
+	local _hold=0
+	if test "$_tuish_buffering" -eq 1 && test "$_tuish_holding" -eq 0
+	then _tuish_holding=1; _tuish_hold=''; _hold=1
+	fi
+
 	# Resolve the clip window in the HOST's frame — it has to happen here, before
 	# create_region switches us into the child's.
 	local _clip=0 _cab_r=0 _cab_c=0 _ccw=0 _cch=0
@@ -706,6 +751,14 @@ tuish_ctx_mount ()
 	# so the paint lands in its region.
 	_tuish_parse_event "F"
 	tuish_ctx_activate "$_host"
+
+	if test "$_hold" -eq 1
+	then
+		_tuish_holding=0
+		_tuish_buf="${_tuish_buf}${_tuish_hold}"
+		_tuish_hold=''
+	fi
+
 	TUISH_CTX=$_child
 	return 0
 }

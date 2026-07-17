@@ -228,7 +228,7 @@ _tuish_parse_event ()
 			tuish_hide_cursor
 			_tuish_cursor_vrow=0
 			"${_tuish_render_fn:-tuish_on_redraw}" "$_level"
-			test -n "$_tuish_buf" && _tuish_out "$_tuish_buf"
+			test -n "$_tuish_buf" && _tuish_sink "$_tuish_buf"
 			_tuish_buf=''
 			_tuish_buffering=0
 		fi

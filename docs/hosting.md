@@ -148,7 +148,7 @@ No child runs a loop of its own, so every child stays live at once.
 | `tuish_ctx_mount R C W H FN...` | Create a region, run the child's (non-blocking) `FN` setup in it, leave the host active |
 | `tuish_ctx_dispatch CTX`        | Drive a child with the currently decoded event (keys, mouse, resize) |
 | `tuish_ctx_tick CTX`            | Drive a child with an **idle** tick, at *its own* rate (see below) |
-| `tuish_ctx_render CTX`          | Repaint a child now (call it after moving one — see [Scrolling a live child](#scrolling-a-live-child)) |
+| `tuish_ctx_render CTX`          | Repaint a child now — into the host's frame if one is open (see [One frame, one write](#one-frame-one-write)) |
 | `tuish_ctx_sync_interval CTX...`| Adopt the fastest tick among the host and the listed children   |
 | `tuish_ctx_unmount CTX`         | Fold a child's viewport and drop its context                    |
 
@@ -219,6 +219,32 @@ The child is **occluded, not resized**. It never learns it is clipped.
 `tuish_ctx_render` matters here: a child repaints on its own idle tick, and at a lazy
 interval that leaves a visibly torn widget on screen for a whole tick while the user
 scrolls. Repaint it yourself, right after you move it.
+
+### One frame, one write
+
+Call `tuish_ctx_render` **inside your own `tuish_begin`/`tuish_end`** and the child's
+output is spliced into your frame rather than written on its own:
+
+```sh
+tuish_begin
+_paint_background
+_draw_prose
+_render_children      # tuish_ctx_render for each — no writes yet
+tuish_end             # ONE write: background, prose, and every child
+```
+
+This is not just a byte count. `_tuish_buf` is a *per-context* frame, so a host cannot
+buffer "everything that happens" — the moment it activates a child, it is looking at the
+child's buffer, and the child's own `tuish_end` goes straight to the terminal. A page
+with three widgets therefore emitted four writes, and the terminal drew each: you saw the
+prose land at the new scroll offset while the widgets were still at the old one, a frame
+at a time. It reads as a shimmer, or a ghost trailing the text.
+
+The child's output enters the buffer at the point you called from, so render children
+**last** — after your background fill, or it lands on top of them.
+
+`tuish_ctx_mount` does the same with the child's first paint, so mounting a widget in
+response to a click does not flash it onto the screen a frame before the page around it.
 
 **Clip a child from its FIRST paint.** `tuish_ctx_mount` does not merely create a
 context — it runs the child's setup *and paints it*. A child mounted while already
