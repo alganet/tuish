@@ -697,6 +697,15 @@ _render_frame ()
 	return 0
 }
 
+# Painting every frame ourselves does NOT excuse us from answering a host.
+#
+# A host repaints its children when it assembles a frame (it has to — its own background
+# fill would otherwise land on top of us) and when it moves one. It does that through the
+# registered render handler, and an app that registers none paints nothing: the reader is
+# left looking at whatever the host had on screen underneath, with our sprites scribbled
+# over it. So: a full repaint, on demand, for anyone who asks.
+_g_repaint () { _need_full=1; _render_frame; }
+
 # ─── Input handlers ──────────────────────────────────────────────
 _tick ()
 {
@@ -809,6 +818,8 @@ _g_setup ()
 	tuish_init
 	tuish_idle_interval "${TUISH_IDLE_TIMEOUT:-0.02}"
 	TICK_DT=$TUISH_TICK_US
+
+	tuish_on_redraw _g_repaint    # so a host can repaint us where it put us
 
 	# Bindings must be registered while our context is active (after tuish_init) so
 	# they land in its namespace — hence in here, not at file scope.

@@ -76,6 +76,14 @@ Redefining `tuish_on_redraw` as a function still works, but it is process-global
 two apps written that way would fight over the same function. Registration stores
 the handler *per context*, so apps compose. See [event.md](event.md).
 
+**A render handler is not optional, even if you never ask for a redraw yourself.** A
+real-time app paints every frame directly (`examples/game.sh` does — `tuish_request_redraw`
+coalesces, which freezes a game while a key is held). It still has to answer
+`tuish_on_redraw`, because that is how a **host** repaints it: when the host assembles a
+frame (its background fill would otherwise land on top of you) and when it moves you.
+Register one that forces a full repaint. An app that registers none paints *nothing* where
+the host put it, and the reader is left looking at whatever was on screen underneath.
+
 `tuish_on_fini` matters more than it looks. A cooperatively-driven app never
 returns from a `tuish_run` of its own, so cleanup placed after `tuish_run` never
 runs. `tuish_fini` invokes the registered hook on **every** exit path -- standalone
