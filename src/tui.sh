@@ -155,6 +155,23 @@ _tuish_modkeys=0
 _tuish_wrap=0
 _tuish_kitty_raw='letter'
 
+# ─── Tracked key holds ───────────────────────────────────────────
+# " <sanitized>:<µs left> <sanitized>:<µs left> ... " — the keys this context asked to
+# track (tuish_key_track, in keybind.sh) and how much of each one's window is left.
+#
+# A plain VT reports no key release: holding a key is just the same event arriving again at
+# the OS autorepeat rate. So "down" is inferred by RECENCY — each matching event refills the
+# window, each idle tick drains it by TUISH_TICK_US, and anything left means the key is
+# still down. Empty here is the norm, and both hot-path hooks in event.sh test this string
+# first so an app that tracks nothing pays one comparison.
+#
+# The window lives per-context, not as one device setting, because it is a property of the
+# app doing the inferring: a game wants a tight one, a hosted widget may want another. Both
+# are here at the seam rather than in keybind.sh for the reason above them — event.sh reads
+# them per event, and keybind.sh is optional.
+_tuish_key_set=''
+_tuish_key_ttl_us=150000
+
 # Whether mouse-tracking escapes are currently active ON THE TERMINAL. This is
 # DEVICE state (the terminal is singular), so — unlike _tuish_mouse, which is a
 # per-context "does THIS app want mouse events" flag — it is NOT registered as a
@@ -1110,6 +1127,7 @@ tuish_ctx_register \
 	TUISH_CANVAS TUISH_CANVAS_W TUISH_CANVAS_H TUISH_CANVAS_CW TUISH_CANVAS_CH \
 	_tuish_canvas_on _tuish_canvas_r _tuish_canvas_c \
 	_tuish_mouse _tuish_detailed _tuish_modkeys _tuish_wrap \
+	_tuish_key_set _tuish_key_ttl_us \
 	_tuish_cursor_abs_row _tuish_cursor_vrow _tuish_cursor_vcol _tuish_cursor_shape \
 	TUISH_EVENT TUISH_EVENT_KIND TUISH_RAW \
 	TUISH_MOUSE_X TUISH_MOUSE_Y TUISH_MOUSE_ABS_Y \
