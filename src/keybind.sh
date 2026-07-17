@@ -73,12 +73,15 @@ tuish_unbind ()
 	eval "unset _tuish_kb_${_tuish_kb_ns}${_tuish_kb_key}"
 }
 
+# A match sets TUISH_HANDLED=1 *before* the action runs, so the action itself can
+# call tuish_pass to give the event back (see event.sh). Returns 0 when a binding
+# matched -- which is not the same question: a binding that passed still returns 0.
 tuish_dispatch ()
 {
 	# Exact match
 	_tuish_kb_sanitize "$TUISH_EVENT"
 	eval "local _d_action=\"\${_tuish_kb_${_tuish_kb_ns}${_tuish_kb_key}:-}\""
-	if test -n "$_d_action"; then eval "$_d_action"; return 0; fi
+	if test -n "$_d_action"; then TUISH_HANDLED=1; eval "$_d_action"; return 0; fi
 
 	# Glob prefix: a "char *" binding matches any "char X"
 	local _d_prefix="${TUISH_EVENT%% *}"
@@ -86,12 +89,12 @@ tuish_dispatch ()
 	then
 		_tuish_kb_sanitize "${_d_prefix} *"
 		eval "_d_action=\"\${_tuish_kb_${_tuish_kb_ns}${_tuish_kb_key}:-}\""
-		if test -n "$_d_action"; then eval "$_d_action"; return 0; fi
+		if test -n "$_d_action"; then TUISH_HANDLED=1; eval "$_d_action"; return 0; fi
 	fi
 
 	# Wildcard catch-all "*"
 	eval "_d_action=\"\${_tuish_kb_${_tuish_kb_ns}${_tuish_kb_star}:-}\""
-	if test -n "$_d_action"; then eval "$_d_action"; return 0; fi
+	if test -n "$_d_action"; then TUISH_HANDLED=1; eval "$_d_action"; return 0; fi
 
 	return 1
 }

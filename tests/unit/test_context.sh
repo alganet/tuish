@@ -184,4 +184,38 @@ assert_eq "$_fast_n" "100" \
 assert_eq "$_slow_n" "2" \
 	"negotiation: the slow child fires once per second (not sped up by a fast sibling)"
 
+# --- Did the child ACT on it? (TUISH_CTX_HANDLED / tuish_pass) ----------------
+# A host that offers an event to a child needs to know whether the child took it, so
+# that an event the child declined can CHAIN back to the host — the wheel over an
+# inline widget with nothing left to scroll must still scroll the page.
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+
+_child_n=0
+_at_bottom=1                                   # the "cannot scroll any further" state
+
+tuish_ctx_create_region 1 1 10 5
+_kid=$TUISH_CTX
+_tuish_mouse=1                                 # the child listens for the wheel
+tuish_bind 'wdown' '_child_n=$((_child_n + 1)); test $_at_bottom -eq 1 && tuish_pass'
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+
+TUISH_RAW='M 65 5 3'                           # wheel down, inside the child's region
+
+tuish_ctx_dispatch "$_kid"
+assert_eq "$TUISH_CTX_HANDLED" "0" \
+	"chaining: a bound action that calls tuish_pass reports the event as NOT handled"
+assert_eq "$_child_n" "1" \
+	"chaining: ... and it did run — pass hands the event back, it does not skip the action"
+
+_at_bottom=0                                   # now the child can actually scroll
+tuish_ctx_dispatch "$_kid"
+assert_eq "$TUISH_CTX_HANDLED" "1" \
+	"chaining: the same binding, acting on the event, reports it handled"
+assert_eq "$_child_n" "2" "chaining: the action ran again"
+
+TUISH_RAW='C z'                                # the child has no binding for 'z'
+tuish_ctx_dispatch "$_kid"
+assert_eq "$TUISH_CTX_HANDLED" "0" \
+	"chaining: an event with no binding at all is not handled"
+
 test_summary

@@ -66,6 +66,34 @@ see [hosting.md](hosting.md).
 > swallowed as a level. `tuish_on_event` discriminates on argument **count**
 > (`$# -gt 0`).
 
+### Handing an event back
+
+| Function      | Description                                                              |
+|---------------|--------------------------------------------------------------------------|
+| `tuish_pass`  | From inside a bound action: "I saw this event and I am not acting on it" |
+| `TUISH_HANDLED` | 1 once a binding matches, 0 if nothing did (or the action called `tuish_pass`) |
+
+`tuish_dispatch` sets `TUISH_HANDLED=1` **before** running the action, so an action
+that turns out to be a no-op can give the event back:
+
+```sh
+_scroll_down ()
+{
+    test $_top -ge $_max && { tuish_pass; return 0; }   # nothing left to scroll
+    _top=$((_top + 3))
+    tuish_request_redraw
+}
+```
+
+This only matters when your app may be **hosted**. A host reads the result as
+`TUISH_CTX_HANDLED` after `tuish_ctx_dispatch` and chains the event onward -- so the
+wheel that runs out of scroll inside your app continues scrolling the page around it,
+the way a nested scroller does in a browser. See
+[hosting.md](hosting.md#scroll-chaining). Standalone, nothing reads it.
+
+`TUISH_HANDLED` is device-global, not a context field: it describes the single event
+in flight.
+
 ### Teardown
 
 ```sh

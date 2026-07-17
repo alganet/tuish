@@ -630,8 +630,13 @@ _ed_drag ()
 	tuish_request_redraw
 }
 
+# The wheel. Both CHAIN: if the view cannot actually move -- we are already at the
+# top/bottom, or the whole buffer fits -- the event is handed back with tuish_pass so
+# whatever hosts us can scroll instead. A two-line editor embedded in a scrolling page
+# must not swallow the page's wheel.
 _ed_scroll_up ()
 {
+	test $_view_top -le 1 && { tuish_pass; return 0; }
 	_view_top=$((_view_top - 3))
 	test $_view_top -lt 1 && _view_top=1
 	tuish_request_redraw
@@ -639,9 +644,11 @@ _ed_scroll_up ()
 
 _ed_scroll_down ()
 {
-	_view_top=$((_view_top + 3))
+	tuish_buf_count "$_ed_buf"
 	local _max=$((TUISH_BUF_COUNT - _view_height + 1))
 	test $_max -lt 1 && _max=1
+	test $_view_top -ge $_max && { tuish_pass; return 0; }
+	_view_top=$((_view_top + 3))
 	test $_view_top -gt $_max && _view_top=$_max
 	tuish_request_redraw
 }
@@ -845,7 +852,10 @@ _ed_resize ()
 
 _ed_noop () { :; }
 
-_ed_show_unbound () { :; }
+# The catch-all. It exists so an unbound key is visibly a no-op rather than falling
+# through to some default -- but "no-op" means we did NOT act on it, so hand it back
+# (tuish_pass) instead of silently consuming it on a host's behalf.
+_ed_show_unbound () { tuish_pass; }
 
 # ─── Rendering ──────────────────────────────────────────────────────
 

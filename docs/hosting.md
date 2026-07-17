@@ -49,6 +49,7 @@ adopts the context its host created for it.
 | `TUISH_CTX`      | Id of the context just created or mounted                  |
 | `TUISH_CTX_ROOT` | Id of the root (top-level app) context                     |
 | `TUISH_CTX_QUIT` | Set by `tuish_ctx_dispatch`/`tuish_ctx_tick` when the child it drove quit itself |
+| `TUISH_CTX_HANDLED` | Set by `tuish_ctx_dispatch`: 1 if the child acted on the event, 0 if it declined it (see [Scroll chaining](#scroll-chaining)) |
 
 `R C` are the region's top-left in the **host's** logical coordinates and `W H`
 its size. The host's live transform resolves that to absolute cells, so regions
@@ -243,6 +244,56 @@ everything except the raw escapes. Two rules for an app that may be clipped:
   stays full-size while the visible clip shrinks. Only `tuish_vmove` knows.
 - Keep off `tuish_clear_screen` / `clear_line` / `clear_to_eol` / `clear_to_bol` and
   `tuish_move`, which address the physical terminal. See [term.md](term.md).
+
+### Scroll chaining
+
+Once a child scrolls *with* the page, the wheel over it is ambiguous. It may be the
+child's (an editor with more lines than it can show) or the page's (a widget that
+scrolls nothing at all). Routing it purely by position gets this wrong in the way that
+matters most: park the pointer over a widget that ignores the wheel and the page stops
+scrolling **entirely** -- and it can never recover, because nothing moves the widget
+out from under the pointer.
+
+So ask the child first, and take the event back if it did nothing with it:
+
+```sh
+tuish_ctx_dispatch "$_ctx"
+if test "$TUISH_CTX_HANDLED" -eq 0
+then
+    case "$TUISH_EVENT" in
+        whup|wdown) _scroll_the_page ;;   # the child declined it — it is ours
+    esac
+fi
+```
+
+`TUISH_CTX_HANDLED` is 1 when a binding in the child matched **and acted**. Three ways
+it comes back 0:
+
+- the child has no binding for the event;
+- the event never reached the child's bindings at all (a child that never called
+  `tuish_mouse_on` drops mouse events);
+- a binding matched, ran, and called **`tuish_pass`** -- "I looked at this and I am
+  not acting on it."
+
+That last one is what makes the end of a scroll continue onto the page, the way a
+nested scroller does in a browser. `tuish_dispatch` marks the event handled *before*
+running the action, precisely so the action can hand it back:
+
+```sh
+_scroll_down ()
+{
+    test $_top -ge $_max && { tuish_pass; return 0; }   # already at the bottom
+    _top=$((_top + 3))
+    tuish_request_redraw
+}
+```
+
+An app that is a *picture* rather than an app -- a rendered snippet, a chart -- should
+bind `tuish_pass`, not `:`, as its catch-all. `:` silently eats every event a host
+offers it.
+
+A **full-pane** child is the exception: it owns its region and there is nothing behind
+it to scroll, so a host should let it consume the wheel unconditionally.
 
 ### Idle-tick negotiation
 

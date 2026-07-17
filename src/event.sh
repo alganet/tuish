@@ -61,6 +61,25 @@ _tuish_render_fn=''
 _tuish_event_fn=''
 command -v tuish_ctx_register >/dev/null 2>&1 && tuish_ctx_register _tuish_render_fn _tuish_event_fn
 
+# ─── Did anything act on this event? ─────────────────────────────
+# Set to 0 before each dispatch and to 1 by tuish_dispatch when a binding matches.
+# A host reads it (as TUISH_CTX_HANDLED, after tuish_ctx_dispatch) to decide whether
+# a child consumed the event or is handing it back — which is what makes scroll
+# CHAINING possible: give the wheel to the widget under the pointer, and if the
+# widget declines it, scroll the page instead.
+#
+# DEVICE-global, deliberately not a context register: it describes the one event in
+# flight, and a per-context copy would be swapped out by tuish_ctx_activate in the
+# middle of the very dispatch it is reporting on.
+TUISH_HANDLED=0
+
+# "I saw this event and I am not acting on it." An action calls this to hand the
+# event back to whoever hosts it, so a bound-but-inert key still chains: an editor
+# already scrolled to the bottom passes the wheel up rather than swallowing it.
+# Call it from inside the action -- tuish_dispatch marks the event handled BEFORE
+# running the action, precisely so the action can take it back.
+tuish_pass () { TUISH_HANDLED=0; }
+
 # tuish_on_redraw is polymorphic:
 #   tuish_on_redraw FUNC   (arg contains a non-digit) -> register FUNC as the
 #                          active context's render handler (the hostable form).
@@ -182,6 +201,7 @@ _tuish_parse_event ()
 	fi
 
 	tuish_begin
+	TUISH_HANDLED=0
 	"${_tuish_event_fn:-tuish_on_event}"
 
 	if test $_tuish_redraw_requested -eq 1
