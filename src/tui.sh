@@ -1356,9 +1356,19 @@ _tuish_init_term ()
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
 	trap 'exit 129' HUP
+	# NOTE: busybox stty validates the WHOLE argument list before applying any of
+	# it, and it has no `discard` control char — so a single `discard undef` makes
+	# the entire call fail and (with the 2>/dev/null) silently leave the terminal
+	# in cooked mode: echo on, canonical on, arrows echoing as ^[OA. On a dev box
+	# `stty` is GNU coreutils and accepts it, so this only bites a busybox-only
+	# system (the exact target for a shell-driven console distro). Keep the raw
+	# setup in one call every stty accepts; disable VDISCARD (Ctrl-O) as a
+	# best-effort follow-up. `raw` already clears IEXTEN, so VDISCARD is inert
+	# regardless — the second call is belt-and-suspenders where it is supported.
 	stty raw -echo -ctlecho -isig -icanon -ixon -ixoff -tostop -ocrnl \
 		-icrnl -inlcr -igncr \
-		intr undef quit undef werase undef discard undef time 0 2>/dev/null
+		intr undef quit undef werase undef time 0 2>/dev/null
+	stty discard undef 2>/dev/null || :
 	_tuish_stty="$(stty -g)"
 
 	trap '_tuish_signal=resize; _tuish_precols=$TUISH_COLUMNS' WINCH 2>/dev/null || :
