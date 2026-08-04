@@ -71,9 +71,8 @@ _bx_dim_at ()   # $1=row (viewport) $2=col $3=text
 	# Row 1 is the fixed header, and the root context's clip has no upper edge, so a
 	# scrolled-off row (0 or negative) would still resolve to a cell. Keep the bound.
 	test "$1" -lt 2 && return 0
-	tuish_vmove "$1" "$2" || return 0
 	tuish_dim
-	tuish_print "$3"
+	tuish_text "$1" "$2" "$3"   # clips to the region (raw print bled a narrow host)
 	tuish_sgr_reset
 }
 
@@ -196,8 +195,9 @@ _bx_header ()
 	# a full-terminal-width bar straight across an embedding host's page.)
 	tuish_reverse
 	tuish_clear_to_edge 1
-	tuish_vmove 1 1
-	tuish_print " boxes.sh | ${_bx_sname} (${TUISH_DRAW_BACKEND}) | b:backend n/p c j/k q:quit "
+	# tuish_text positions and clips the header bar to the region (raw print overran a
+	# host pane); the reverse attribute set above carries into it, closed by the reset.
+	tuish_text 1 1 " boxes.sh | ${_bx_sname} (${TUISH_DRAW_BACKEND}) | b:backend n/p c j/k q:quit "
 	tuish_sgr_reset
 }
 

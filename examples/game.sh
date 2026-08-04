@@ -567,7 +567,15 @@ _paint_row ()   # $1 row
 		# Close any open colour so sprites drawn afterward are not tinted.
 		if test "$_cur" != none && test "$_cur" != -1
 		then tuish_sgr_reset_seq; _row="${_row}${TUISH_SEQ}"; fi
-		tuish_print "$_row"
+		# The board is fitted to the viewport, so it normally fits the visible window
+		# and the raw print (cursor already positioned above) is safe and skips the
+		# per-row width scan — the hot path. Only when scrolled under a narrower pane
+		# (visible clip < board width) do we fall to the SGR-aware clipping print.
+		_tuish_clip_avail 1
+		if test $(( _map_cols * TW )) -le $_tuish_avail
+		then tuish_print "$_row"
+		else tuish_text "$1" 1 "$_row"
+		fi
 	fi
 	return 0
 }
@@ -614,10 +622,9 @@ _draw_hud ()
 	local _hrow=$(( _map_rows + 1 ))
 	tuish_sgr_reset
 	tuish_clear_to_edge "$_hrow"   # bounded by our width; ESC[K would overrun a host
-	if tuish_vmove "$_hrow" 1
-	then
-		tuish_print "Room ${_room}/${_room_count}  🪙 ${_coins_got}/${_coin_n}  ☠ ${_deaths}   [WASD/←↑→] move  [R] restart  [Q] quit"
-	fi
+	# tuish_text clips the fixed-width HUD to the region (it overran a narrow host pane
+	# as a raw print) and positions itself, so no separate tuish_vmove is needed.
+	tuish_text "$_hrow" 1 "Room ${_room}/${_room_count}  🪙 ${_coins_got}/${_coin_n}  ☠ ${_deaths}   [WASD/←↑→] move  [R] restart  [Q] quit"
 	return 0
 }
 

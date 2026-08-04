@@ -288,8 +288,8 @@ _tuish_draw_xform ()
 	# Left-edge cull: column before viewport
 	test $_tuish_draw_tc -lt 1 && return 1
 	# Right-edge cull: column past viewport
-	test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0 \
-		&& test $_tuish_draw_tc -gt $TUISH_VIEW_COLS && return 1
+	if test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0
+	then _tuish_clip_avail $_tuish_draw_tc; test $_tuish_avail -lt 1 && return 1; fi
 	test $_tuish_draw_clip -eq 0 && return 0
 	test $_tuish_draw_tr -lt $_tuish_draw_clip_top && return 1
 	test $_tuish_draw_tr -gt $_tuish_draw_clip_bot && return 1
@@ -309,8 +309,8 @@ _tuish_draw_xform_rect ()
 	_tuish_draw_ct=0
 	_tuish_draw_cb=0
 	# Right-edge cull: column past viewport
-	test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0 \
-		&& test $_tuish_draw_tc -gt $TUISH_VIEW_COLS && return 1
+	if test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0
+	then _tuish_clip_avail $_tuish_draw_tc; test $_tuish_avail -lt 1 && return 1; fi
 	test $_tuish_draw_clip -eq 0 && return 0
 	test $((_tuish_draw_tr + _tuish_draw_th - 1)) -lt $_tuish_draw_clip_top && return 1
 	test $_tuish_draw_tr -gt $_tuish_draw_clip_bot && return 1
@@ -368,7 +368,7 @@ _tuish_draw_box_impl ()
 	# Right-edge clipping
 	local _clip_r=0
 	if test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0; then
-		local _avail=$((TUISH_VIEW_COLS - _col + 1))
+		_tuish_clip_avail $_col; local _avail=$_tuish_avail
 		test $_avail -lt 1 && return 0
 		if test $_w -gt $_avail; then
 			_clip_r=1
@@ -589,7 +589,7 @@ tuish_draw_hdiv ()
 	# Right-edge clipping
 	local _clip_r=0
 	if test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0; then
-		local _avail=$((TUISH_VIEW_COLS - _col + 1))
+		_tuish_clip_avail $_col; local _avail=$_tuish_avail
 		test $_avail -lt 1 && return 0
 		test $_w -gt $_avail && { _clip_r=1; _w=$_avail; }
 	fi
@@ -679,7 +679,7 @@ tuish_draw_hline ()
 
 	# Right-edge clipping
 	if test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0; then
-		local _avail=$((TUISH_VIEW_COLS - _col + 1))
+		_tuish_clip_avail $_col; local _avail=$_tuish_avail
 		test $_avail -lt 1 && return 0
 		test $_w -gt $_avail && _w=$_avail
 	fi

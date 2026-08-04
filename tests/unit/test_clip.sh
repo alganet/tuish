@@ -95,4 +95,80 @@ case "$_tuish_buf" in *X*) _wrote=yes;; *) _wrote=no;; esac
 assert_eq "$_wrote" "yes" "print after clipped vmove writes (no implicit suppression)"
 _tuish_buf=''; _tuish_buffering=0
 
+# ─── Right-edge clip: content stops at the visible region edge, not the screen ──
+# The bleed bug: writes clamped to TUISH_VIEW_COLS (region full width) or not at all,
+# so a hosted child's over-wide row ran to the physical screen edge. Now every
+# region-aware write clips to min(TUISH_VIEW_COLS, _tx_lcmax) via _tuish_clip_avail.
+_count_char () {   # $1 string $2 char -> _cc = occurrences of char in string
+	_cc=0; _s=$1
+	while case "$_s" in *"$2"*) true;; *) false;; esac
+	do _s=${_s#*"$2"}; _cc=$((_cc + 1)); done
+}
+ESC=$(printf '\033')
+_sixtyA=''; _i=0; while test $_i -lt 60; do _sixtyA="${_sixtyA}A"; _i=$((_i + 1)); done
+
+TUISH_LINES=24; TUISH_COLUMNS=80; TUISH_VIEW_COLS=40; TUISH_VIEW_TOP=1; _tuish_wrap=0
+_tuish_tx_reset            # no sub-clip: _tx_lcmax defaults wide, so clip == VIEW_COLS
+
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 "$_sixtyA"
+_count_char "$_tuish_buf" A
+assert_eq "$_cc" "40" "tuish_text: 60-col string clipped to region width 40"
+
+tuish_begin; _tuish_buf=''
+tuish_clear_region 1 1 60 1
+_count_char "$_tuish_buf" ' '
+assert_eq "$_cc" "40" "tuish_clear_region: width 60 clamped to region width 40"
+
+# SGR-bearing row: clipped to 40 visible cells (escape bytes not miscounted), and a
+# forced trailing reset closes the run whose own reset fell past the cut. tuish emits
+# its own escapes as the literal string \033[…m (expanded at flush), so match that.
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 "${ESC}[31m${_sixtyA}${ESC}[0m"
+_count_char "$_tuish_buf" A
+assert_eq "$_cc" "40" "tuish_text SGR row: clipped to 40 visible cells (escapes not counted)"
+case "$_tuish_buf" in *'\033[0m') _sgr_reset=yes;; *) _sgr_reset=no;; esac
+assert_eq "$_sgr_reset" "yes" "tuish_text SGR row: ends with reset (no colour leak into chrome)"
+
+# Scroll-under-pane: a visible clip narrower than the region (_tx_lcmax < VIEW_COLS).
+# Previously bled to VIEW_COLS=40; must now stop at the visible window (20).
+tuish_begin; _tuish_buf=''; _tx_lcmax=20
+tuish_text 1 1 "$_sixtyA"
+_count_char "$_tuish_buf" A
+assert_eq "$_cc" "20" "tuish_text: clips to the visible window (_tx_lcmax=20), not region 40"
+
+tuish_begin; _tuish_buf=''; _tx_lcmax=20
+tuish_clear_region 1 1 60 1
+_count_char "$_tuish_buf" ' '
+assert_eq "$_cc" "20" "tuish_clear_region: clamps to the visible window (_tx_lcmax=20)"
+_tuish_tx_reset
+_tuish_buf=''; _tuish_buffering=0
+
+# ─── The SGR path and the plain path clip a scrolled field identically ─────────
+# A left-scrolled fixed-width field (COL < 1 plus maxwidth) is the one call shape
+# where the two paths could disagree: maxwidth counts from the string's own start,
+# so trimming the scrolled-off head has to come out of it. 10 cells of budget minus
+# 4 scrolled off the left = 6 drawn — whether or not the row carries colour.
+tuish_begin; _tuish_buf=''
+tuish_text 1 -3 "$_sixtyA" maxwidth=10
+_count_char "$_tuish_buf" A
+assert_eq "$_cc" "6" "tuish_text plain: maxwidth counts the head scrolled off the left"
+
+tuish_begin; _tuish_buf=''
+tuish_text 1 -3 "${ESC}[31m${_sixtyA}${ESC}[0m" maxwidth=10
+_count_char "$_tuish_buf" A
+assert_eq "$_cc" "6" "tuish_text SGR: same cells as the plain path for the same call"
+
+# An OSC (ESC ']' … ST) is not a CSI, so it stays on the plain path — which also
+# means no forced trailing reset. Keying the escape path on ESC alone would fire it
+# here and clobber an attribute the caller set around the call (the `tuish_bold;
+# tuish_text …` idiom), for a sequence the CSI-only window cannot skip anyway.
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 "${ESC}]0;title${ESC}\\ok"
+case "$_tuish_buf" in *"0;title"*) _osc=kept;; *) _osc=mangled;; esac
+assert_eq "$_osc" "kept" "tuish_text: a non-CSI escape reaches the terminal intact"
+case "$_tuish_buf" in *'\033[0m') _osc_reset=yes;; *) _osc_reset=no;; esac
+assert_eq "$_osc_reset" "no" "tuish_text: a non-CSI escape forces no trailing reset"
+_tuish_buf=''; _tuish_buffering=0
+
 test_summary

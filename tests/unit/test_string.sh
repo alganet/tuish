@@ -193,4 +193,22 @@ _t='a⃛bc'
 tuish_str_window _t 0 2;  assert_eq "$TUISH_SWINDOW" "a⃛b"      "window: combining mark kept with visible base"
 tuish_str_window _t 1 2;  assert_eq "$TUISH_SWINDOW" "bc"       "window: combining mark dropped when base scrolled off"
 
+# SGR escapes: zero display width, never split, carried through so a clipped colour
+# row keeps correct state (used by the escape-aware path in tuish_text).
+_e=$(printf '\033')
+_t="${_e}[31mABCDEF${_e}[0m"
+tuish_str_window _t 0 3;  assert_eq "$TUISH_SWINDOW" "${_e}[31mABC"          "window sgr: leading run kept, 3 cells"
+tuish_str_window _t 0 6;  assert_eq "$TUISH_SWINDOW" "${_e}[31mABCDEF${_e}[0m" "window sgr: whole row, both runs"
+tuish_str_window _t 2 2;  assert_eq "$TUISH_SWINDOW" "${_e}[31mCD"           "window sgr: leading run carried past offset"
+# Two runs: colour state before the visible slice is preserved.
+_t="${_e}[31mAB${_e}[32mCD${_e}[0mEF"
+tuish_str_window _t 0 3;  assert_eq "$TUISH_SWINDOW" "${_e}[31mAB${_e}[32mC"  "window sgr: two runs, clip mid-second"
+tuish_str_window _t 3 3;  assert_eq "$TUISH_SWINDOW" "${_e}[31m${_e}[32mD${_e}[0mEF" "window sgr: both leading runs carried to offset 3"
+# A CSI is never counted as columns nor split (kept whole even a multi-param run). A
+# run sitting just before a clipped cell is still carried through — harmless, as the
+# escape-aware tuish_text force-closes with a trailing reset.
+_t="X${_e}[1;33mY"
+tuish_str_window _t 0 1;  assert_eq "$TUISH_SWINDOW" "X${_e}[1;33m"           "window sgr: CSI before clip carried (colour state), never split"
+tuish_str_window _t 1 1;  assert_eq "$TUISH_SWINDOW" "${_e}[1;33mY"           "window sgr: multi-param CSI kept whole"
+
 test_summary

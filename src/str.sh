@@ -173,10 +173,27 @@ tuish_str_window ()
 	esac
 	# Slow path: decode UTF-8 (mirrors tuish_str_width), tracking the running
 	# display column _tuish_wn_col (the start column of the current char).
-	local _tuish_wn_i=0 _tuish_wn_col=0 _tuish_wn_b0 _tuish_wn_b1 _tuish_wn_b2 _tuish_wn_cp _tuish_wn_n _tuish_wn_ch _tuish_wn_out=''
+	local _tuish_wn_i=0 _tuish_wn_col=0 _tuish_wn_b0 _tuish_wn_b1 _tuish_wn_b2 _tuish_wn_cp _tuish_wn_n _tuish_wn_ch _tuish_wn_j _tuish_wn_out=''
 	while test $_tuish_wn_i -lt $_tuish_wn_len
 	do
 		_tuish_ord "${_tuish_wn_str:$_tuish_wn_i:1}"; _tuish_wn_b0=$_tuish_code
+		# CSI/SGR escape: ESC '[' … final byte (0x40-0x7E). Emit verbatim at ZERO
+		# width and never split, so a colour run keeps correct state even when the run
+		# that set it is scrolled off the left. (A trailing reset that falls past the
+		# right edge is re-asserted by tuish_text's dangling-reset guard.)
+		if test $_tuish_wn_b0 -eq 27 && test "${_tuish_wn_str:$((_tuish_wn_i + 1)):1}" = '['
+		then
+			_tuish_wn_j=$((_tuish_wn_i + 2))
+			while test $_tuish_wn_j -lt $_tuish_wn_len
+			do
+				_tuish_ord "${_tuish_wn_str:$_tuish_wn_j:1}"
+				_tuish_wn_j=$((_tuish_wn_j + 1))
+				test $_tuish_code -ge 64 && test $_tuish_code -le 126 && break
+			done
+			_tuish_wn_out="${_tuish_wn_out}${_tuish_wn_str:$_tuish_wn_i:$((_tuish_wn_j - _tuish_wn_i))}"
+			_tuish_wn_i=$_tuish_wn_j
+			continue
+		fi
 		if test $_tuish_wn_b0 -lt 128
 		then _tuish_wn_n=1; _tuish_wn_cp=$_tuish_wn_b0
 		elif test $_tuish_wn_b0 -lt 224 && test $((_tuish_wn_i + 1)) -lt $_tuish_wn_len
