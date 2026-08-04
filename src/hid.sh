@@ -329,10 +329,20 @@ _tuish_resolve_vt ()
 		'79 67' | '91 67' ) TUISH_EVENT='right';;
 		'79 68' | '91 68' ) TUISH_EVENT='left';;
 
+		# f1-f4: SS3 (ESC O P..S) and CSI (ESC [ P..S) forms.
 		'79 80' | '91 80' ) TUISH_EVENT='f1';;
 		'79 81' | '91 81' ) TUISH_EVENT='f2';;
 		'79 82' | '91 82' ) TUISH_EVENT='f3';;
 		'79 83' | '91 83' ) TUISH_EVENT='f4';;
+		# f1-f5 on the LINUX CONSOLE: ESC [ [ A..E (the double-'[' form). The
+		# console has no SS3/CSI f1-f4 and uses [15~ for none of these, so these
+		# are the only way f1-f5 arrive on a bare VT. (event.sh keeps the second
+		# '[' from mis-dispatching as a CSI final.)
+		'91 91 65' ) TUISH_EVENT='f1';;
+		'91 91 66' ) TUISH_EVENT='f2';;
+		'91 91 67' ) TUISH_EVENT='f3';;
+		'91 91 68' ) TUISH_EVENT='f4';;
+		'91 91 69' ) TUISH_EVENT='f5';;
 		'91 49 53 126' ) TUISH_EVENT='f5' ;;
 		'91 49 55 126' ) TUISH_EVENT='f6' ;;
 		'91 49 56 126' ) TUISH_EVENT='f7' ;;

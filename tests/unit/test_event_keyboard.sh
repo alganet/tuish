@@ -612,4 +612,65 @@ reset_state
 _tuish_parse_event "S cont"
 assert_eq "$TUISH_EVENT" "cont" "signal: cont"
 
+# --- Linux console F1-F5: the double-'[' form, ESC [ [ A..E ---------------------
+# The bare console has no SS3 F1-F4 and no [15~ here, so ESC [ [ A..E is the only
+# way these arrive on tty1 — the target for a shell-driven console distro.
+reset_state
+_tuish_parse_event "E 91 91 65"
+assert_eq "$TUISH_EVENT" "f1" "F1 (linux console, ESC [ [ A)"
+
+reset_state
+_tuish_parse_event "E 91 91 66"
+assert_eq "$TUISH_EVENT" "f2" "F2 (linux console)"
+
+reset_state
+_tuish_parse_event "E 91 91 67"
+assert_eq "$TUISH_EVENT" "f3" "F3 (linux console)"
+
+reset_state
+_tuish_parse_event "E 91 91 68"
+assert_eq "$TUISH_EVENT" "f4" "F4 (linux console)"
+
+reset_state
+_tuish_parse_event "E 91 91 69"
+assert_eq "$TUISH_EVENT" "f5" "F5 (linux console)"
+
+# The resolve table above only matters if the READER hands it '91 91 65' whole.
+# The second '[' is an INTRODUCER, but 0x5B sits inside the CSI final-byte range
+# 0x40-0x7E — so without the introducer branch the reader dispatches on it and
+# leaks the trailing letter as a separate keystroke. Drive the real loop.
+_feed=''
+_log=''
+_tuish_idle_wait ()
+{
+	if test -z "$_feed"; then _tuish_quit=yes; return 1; fi
+	_tuish_byte="${_feed%"${_feed#?}"}"
+	_feed="${_feed#?}"
+	return 0
+}
+_tuish_get_byte ()
+{
+	test -n "$_feed" || return 1
+	_tuish_byte="${_feed%"${_feed#?}"}"
+	_feed="${_feed#?}"
+	return 0
+}
+_tuish_peek_byte () { return 1; }
+tuish_on_event ()
+{
+	case "$TUISH_EVENT_KIND" in
+		idle) ;;
+		*) _log="${_log}${TUISH_EVENT} ";;
+	esac
+}
+
+_esc=$(printf '\033')
+_feed="${_esc}[[A"; _log=''; _tuish_pending_byte=''; _tuish_noinput=no
+tuish_run
+assert_eq "$_log" "f1 " "reader: ESC [ [ A is ONE f1 — the second '[' never dispatches"
+
+_feed="${_esc}[[E${_esc}[B"; _log=''; _tuish_pending_byte=''; _tuish_noinput=no
+tuish_run
+assert_eq "$_log" "f5 down " "reader: a console F5 does not disturb the CSI after it"
+
 test_summary

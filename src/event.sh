@@ -711,6 +711,17 @@ tuish_run ()
 					# state so the final-byte check below doesn't fire on the 'O'.
 					_tuish_r_esc=" 79"
 					continue
+				elif
+					test "$_tuish_r_esc" = '91' &&
+					test "$_tuish_byte" = "["
+				then
+					# Linux console F1-F5 arrive as ESC [ [ A..E — the SECOND '[' is
+					# an INTRODUCER, not a CSI final byte. Mark the state so the
+					# final-byte dispatch below does not fire on '[' (0x5B is inside
+					# 0x40-0x7E) and leak the trailing letter as a keystroke; the next
+					# byte (A..E) is the real final. Resolves to f1..f5 in hid.sh.
+					_tuish_r_esc="91 91"
+					continue
 				elif test "${_tuish_byte}" = 'u' && test "${_tuish_r_esc}" != "${_tuish_r_esc#91}"
 				then
 					# CSI u (kitty keyboard protocol)
