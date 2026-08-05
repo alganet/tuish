@@ -127,4 +127,27 @@ assert_in "$_clearlog" '\033[4;3H'       "canvas_clear: clears bottom row (vp 4,
 assert_in "$_clearlog" '        '        "canvas_clear: emits W*CW=8 spaces per row"
 _tuish_write () { _emit="$1"; }
 
+# ─── The clip budget is TERMINAL COLUMNS, and it knows about CW ───────────────
+# tuish_vmove has always mapped cells to columns; _tuish_clip_avail now uses the same
+# map, so a CWxCH canvas gets a COLUMN budget rather than a cell count. This suite is
+# also the one that runs the term.sh + canvas.sh profile with TUISH_COLUMNS unset, so
+# it owns the "skip the bound you do not know" half of the contract.
+TUISH_VIEW_COLS=80; TUISH_VIEW_LEFT=0; _tuish_wrap=0
+_tuish_base_lcmin=-99999; _tuish_base_lcmax=99999; _tuish_tx_reset
+
+TUISH_COLUMNS=0                  # the term.sh-only profile: the screen width is unknown
+tuish_canvas 1 1 10 3 2
+_tuish_clip_avail 1
+assert_eq "$_tuish_avail" "20" "clip_avail: 10 cells x CW=2 is 20 columns"
+_tuish_clip_avail 6
+assert_eq "$_tuish_avail" "10" "clip_avail: from cell 6 (terminal col 11) is 10 columns"
+_tuish_clip_avail 11
+assert_eq "$_tuish_avail" "0"  "clip_avail: past the last cell is 0"
+
+TUISH_COLUMNS=15                 # now the screen is narrower than the scaled canvas
+_tuish_clip_avail 1
+assert_eq "$_tuish_avail" "15" "clip_avail: the physical screen bounds a scaled canvas"
+TUISH_COLUMNS=0
+tuish_canvas_off
+
 test_summary

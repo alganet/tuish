@@ -72,7 +72,7 @@ assert_eq "$_ends_reset" "yes" "box past bottom: buffer ends with SGR reset (no 
 # ─── Sanity: a fully on-screen colored box still ends with a reset ──
 # (In-process is safe here: nothing clips, so no abort is possible.)
 . "$SRC/compat.sh"; . "$SRC/ord.sh"; . "$SRC/tui.sh"
-. "$SRC/term.sh";   . "$SRC/str.sh"; . "$SRC/draw.sh"
+. "$SRC/term.sh";   . "$SRC/str.sh"; . "$SRC/draw.sh"; . "$SRC/canvas.sh"
 TUISH_LINES=24; TUISH_COLUMNS=80; TUISH_VIEW_COLS=80
 TUISH_VIEW_TOP=1; _tuish_wrap=0
 tuish_begin
@@ -170,5 +170,109 @@ assert_eq "$_osc" "kept" "tuish_text: a non-CSI escape reaches the terminal inta
 case "$_tuish_buf" in *'\033[0m') _osc_reset=yes;; *) _osc_reset=no;; esac
 assert_eq "$_osc_reset" "no" "tuish_text: a non-CSI escape forces no trailing reset"
 _tuish_buf=''; _tuish_buffering=0
+
+# ─── The clip authority answers in TERMINAL COLUMNS, not mixed units ───────────
+# TUISH_VIEW_COLS is viewport-logical columns; _tx_lcmax is in the CURRENT cell space,
+# which under a canvas is CANVAS CELLS of _tx_cw columns each at offset _tx_off_c.
+# min()-ing them raw and then spending the answer as columns is wrong in BOTH
+# directions. Every bound now goes through the same affine map tuish_vmove uses
+# before the comparison.
+_ninety=''; _i=0; while test $_i -lt 90; do _ninety="${_ninety}A"; _i=$((_i + 1)); done
+
+# A canvas whose cells are 2 columns wide owns twice as many COLUMNS as cells.
+# Root-style base clip (1..80); 50 cells at CW=2 is exactly the 80-column screen.
+TUISH_LINES=24; TUISH_COLUMNS=80; TUISH_VIEW_COLS=80
+TUISH_VIEW_TOP=1; TUISH_VIEW_LEFT=0; _tuish_wrap=0
+_tuish_base_lrmin=1; _tuish_base_lrmax=24; _tuish_base_lcmin=1; _tuish_base_lcmax=80
+_tuish_tx_reset
+tuish_canvas 1 1 50 3 2
+_tuish_clip_avail 1
+assert_eq "$_tuish_avail" "80" "clip_avail: a CW=2 canvas has 80 COLUMNS, not 40 cells"
+
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 "$_ninety"
+_count_char "$_tuish_buf" A
+assert_eq "$_cc" "80" "tuish_text: a CW=2 canvas gets its full width (was cut to half)"
+
+# A canvas at a high column offset must stop at the SCREEN, not at its own cell
+# count. This is the un-seated profile (base clip still ±99999) — an app that sourced
+# term.sh + canvas.sh without a viewport, so _tuish_canvas_clamp has nothing to
+# intersect with and the physical backstop is the only bound left.
+_tuish_base_lrmin=-99999; _tuish_base_lrmax=99999
+_tuish_base_lcmin=-99999; _tuish_base_lcmax=99999
+_tuish_tx_reset
+tuish_canvas 1 71 20 3          # cells 1..20 at terminal columns 71..90 — 10 off-screen
+_tuish_clip_avail 1
+assert_eq "$_tuish_avail" "10" "clip_avail: a canvas at column 71 stops at COLUMNS=80"
+
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 "$_ninety"
+_count_char "$_tuish_buf" A
+assert_eq "$_cc" "10" "tuish_text: a canvas at column 71 does not pass the screen edge"
+
+# A region seated so its right edge falls off the screen. Nothing in the old helper
+# mentioned TUISH_VIEW_LEFT or TUISH_COLUMNS, so an erase ran the region's full
+# nominal width from an absolute column that had less room than that.
+tuish_canvas_off
+TUISH_VIEW_LEFT=70; TUISH_VIEW_COLS=40
+_tuish_base_lcmin=1; _tuish_base_lcmax=40; _tuish_tx_reset
+_tuish_clip_avail 1
+assert_eq "$_tuish_avail" "10" "clip_avail: VIEW_LEFT=70 + 40 wide is bounded by COLUMNS=80"
+
+tuish_begin; _tuish_buf=''
+tuish_clear_region 1 1 40 1
+_count_char "$_tuish_buf" ' '
+assert_eq "$_cc" "10" "tuish_clear_region: an off-screen region erases only what exists"
+
+tuish_begin; _tuish_buf=''
+tuish_clear_to_edge 1
+_count_char "$_tuish_buf" ' '
+assert_eq "$_cc" "10" "tuish_clear_to_edge: same bound, now via one _tuish_clip_avail"
+
+# No viewport at all: the "whole terminal" fallback tuish_clear_to_edge used to carry
+# by hand is now just the case where the region bound is absent and the physical one
+# wins. tuish_text unifies with it — pixel-identical, since tuish_init leaves DECAWM
+# off and the terminal already discards those columns, but ten fewer bytes and the
+# same region-correct rule as everywhere else.
+TUISH_VIEW_LEFT=0; TUISH_VIEW_COLS=0
+_tuish_base_lcmin=-99999; _tuish_base_lcmax=99999; _tuish_tx_reset
+_tuish_clip_avail 1
+assert_eq "$_tuish_avail" "80" "clip_avail: no viewport falls back to TUISH_COLUMNS"
+
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 "$_ninety"
+_count_char "$_tuish_buf" A
+assert_eq "$_cc" "80" "tuish_text: with no viewport, trims at the screen edge"
+
+# Nothing known at ALL — no viewport, no screen width, _tx_lcmax still its ±99999
+# "no clip" default. That default is a sentinel, not a column anyone means, so the
+# answer has to be exactly _TUISH_NOCLIP however far right COL is: measuring the width
+# from it would report 99995 for COL=5, which reads as a real bound and had
+# tuish_clear_to_edge erase a hundred thousand spaces.
+TUISH_COLUMNS=0
+_tuish_clip_avail 1
+assert_eq "$_tuish_avail" "99999" "clip_avail: nothing known at all means no trim"
+_tuish_clip_avail 5
+assert_eq "$_tuish_avail" "99999" "clip_avail: ... and still no trim from a later column"
+tuish_begin; _tuish_buf=''
+tuish_clear_to_edge 1 5
+assert_eq "${#_tuish_buf}" "0" "tuish_clear_to_edge: erases nothing when nothing bounds it"
+TUISH_COLUMNS=80
+
+# _tuish_wrap is the CALLER's policy ("let the terminal wrap"), so it moved out of the
+# helper to the sites that mean it. An erase never has it: an unclamped clear under
+# autowrap spills its spaces onto the next row, still outside the region.
+TUISH_VIEW_COLS=40; _tuish_tx_reset; _tuish_wrap=1
+tuish_begin; _tuish_buf=''
+tuish_clear_region 1 1 60 1
+_count_char "$_tuish_buf" ' '
+assert_eq "$_cc" "40" "clear_region under autowrap: still clamped (an erase cannot wrap)"
+
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 "$_sixtyA"
+_count_char "$_tuish_buf" A
+assert_eq "$_cc" "60" "tuish_text under autowrap: still untrimmed (the policy survived)"
+_tuish_wrap=0
+_tuish_tx_reset; _tuish_buf=''; _tuish_buffering=0
 
 test_summary
