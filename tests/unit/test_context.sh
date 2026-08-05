@@ -299,4 +299,43 @@ tuish_end
 assert_eq "$_writes" "1" "nesting: ... and the next frame still flushes"
 _tuish_buffering=0; _tuish_buf=''
 
+# --- A region seated past the screen edge cannot address cells that are not there ---
+# The seat clip was the child's own extent, intersected with nothing else. A host is
+# free to seat a region anywhere in ITS frame, and nothing downstream re-checks the
+# ABSOLUTE result — tuish_vmove clips the LOGICAL cell and only then maps, and it
+# bounds the absolute row against TUISH_LINES but the absolute column against nothing.
+# So a 20-wide region at column 90 of a 100-column screen handed out 20 columns.
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+tuish_ctx_create_region 1 90 20 4      # 20 wide starting at absolute column 90
+_edge=$TUISH_CTX
+assert_eq "$_tuish_base_lcmax" "11" "seat: the clip stops at column 100, not at the region's 20"
+assert_eq "$TUISH_VIEW_COLS" "20"   "seat: the LAYOUT size is untouched (the child still lays out to 20)"
+
+_tuish_buffering=1; _tuish_buf=''
+tuish_vmove 1 11 && _in=yes || _in=no
+assert_eq "$_in" "yes" "seat: the last on-screen cell is still reachable"
+assert_eq "$_tuish_buf" '\033[1;100H' "seat: ... and it lands on the last physical column"
+
+_tuish_buf=''
+tuish_vmove 1 12 && _out=yes || _out=no
+assert_eq "$_out" "no" "seat: a cell past the screen is refused"
+assert_eq "$_tuish_buf" "" "seat: ... and it emits nothing"
+_tuish_buffering=0; _tuish_buf=''
+
+# A region seated ABOVE row 1 (a child scrolled up under a pane) is the row mirror of
+# the same rule: logical rows that map to absolute row 0 or less are refused.
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+tuish_ctx_create_region -2 0 10 8      # logical rows 1..3 land on absolute -2..0
+_above=$TUISH_CTX
+assert_eq "$_tuish_base_lrmin" "4" "seat: the clip starts at the first row on screen"
+_tuish_buffering=1; _tuish_buf=''
+tuish_vmove 3 1 && _hi=yes || _hi=no
+assert_eq "$_hi" "no" "seat: a row above the screen is refused"
+assert_eq "$_tuish_buf" "" "seat: ... and it emits nothing"
+_tuish_buffering=0; _tuish_buf=''
+
+tuish_ctx_activate "$TUISH_CTX_ROOT"
+tuish_ctx_destroy "$_edge"
+tuish_ctx_destroy "$_above"
+
 test_summary
