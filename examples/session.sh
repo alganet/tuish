@@ -249,10 +249,20 @@ _sess_render ()
 {
 	_sess_lay
 	tuish_begin
-	# The kernel VT has no synchronized-output / double-buffering: a full-screen
-	# clear+repaint every tick is visible mid-paint (flicker). So the background
-	# is filled only on a STRUCTURAL change (launch/close/resize); routine
-	# clock-tick repaints overwrite in place, which the console shows far calmer.
+	# The background is filled only on a STRUCTURAL change (launch/close/resize);
+	# routine repaints overwrite in place.
+	#
+	# This guard was kept deliberately, and measured. Dropping it costs 4434 ->
+	# 7655 bytes per frame, because every frame then erases the whole screen and
+	# paints over it. Under synchronized output (tui.sh) that is invisible and the
+	# guard would be pure waste — but THIS app's target is the bare Linux VT, which
+	# has no synchronized output at all, and there a frame that blanks the screen
+	# before repainting it is a frame you watch happen.
+	#
+	# So it is not "flicker avoidance" any more, it is the VT concession. What would
+	# retire it is the framework knowing what is already on screen and declining to
+	# write it again; until then this stays, and it stays HERE rather than in the
+	# framework because only the app knows a repaint was structural.
 	if test "$_sess_full" -eq 1
 	then tuish_draw_fill 1 1 "$_W" "$_H" bg=$C_BG; _sess_full=0; fi
 
@@ -284,8 +294,12 @@ _sess_render ()
 		then _bg=$C_HOVER      # painted pointer: subtler than selection, no marker
 		fi
 		test "$_sess_name" = "$_sess_app" && _fg=$C_ACCENT2
-		tuish_clear_region "$_rr" $(( _mc + 1 )) $(( _mw - 2 )) 1
-		tuish_text "$_rr" $(( _mc + 1 )) "${_mark}${_sess_label}" fg=$_fg bg=$_bg
+		# One write for the whole row: width= pads the label out to the box interior,
+		# and the padding carries bg=, so the selection highlight fills the row. The
+		# clear_region that used to precede this walked the same cells a second time
+		# and left them blank in between — which the bare console shows you.
+		tuish_text "$_rr" $(( _mc + 1 )) "${_mark}${_sess_label}" \
+		           fg=$_fg bg=$_bg width=$(( _mw - 2 ))
 		_i=$(( _i + 1 )); _rr=$(( _rr + 1 ))
 	done
 
@@ -331,7 +345,10 @@ _sess_on_event ()
 		# A running app that animates (the game) paints itself straight into the
 		# frame, flushed by the event loop — so it does NOT need a host repaint.
 		# The host only repaints to advance the STATUS CLOCK, i.e. once a second,
-		# not every idle tick. That is the single biggest cut to console flicker.
+		# not every idle tick: dropping this doubles the frame count to redraw a
+		# clock that did not change. That is a STATE test — "has the second ticked"
+		# — which is the kind the framework cannot make for you and the kind worth
+		# keeping (see docs/event.md). It is not about blink.
 		# But the app's paint moved the hardware caret, so put the pointer back at
 		# the mouse as the LAST write of this frame — else it trails the sprite.
 		_sess_point
@@ -364,10 +381,12 @@ _sess_on_event ()
 			*)
 				tuish_host_route || :
 				# Repaint so a hosted app that coalesces its redraw (debug, editor)
-				# updates on THIS event — but NOT on high-frequency mouse motion,
-				# which would repaint the whole desktop dozens of times a second and
-				# blink. Motion still reaches the app; it shows on the next discrete
-				# event (a click, a key) or the clock tick.
+				# updates on THIS event — but NOT on high-frequency mouse motion.
+				# Measured at 356 -> 1163 bytes per frame with this dropped: motion
+				# arrives far faster than anything on screen changes, so each of those
+				# frames re-sends a desktop that is already correct. Motion still
+				# reaches the app; it shows on the next discrete event or clock tick.
+				# A framework that remembered the screen would make this unnecessary.
 				case "$TUISH_EVENT" in
 					*move|*hold) : ;;
 					*)           tuish_request_redraw ;;

@@ -117,4 +117,43 @@ tuish_cursor_shape 0
 tuish_begin; tuish_cursor 1 1; _out=$( tuish_end )
 assert_eq "$_out" "${_esc}[1;1H${_esc}[?25h" "no declaration, no DECSCUSR — the caret is still shown"
 
+# ─── Synchronized output (DECSET 2026) ───────────────────────────
+# One buffer is one write, but one write is not one repaint: the browser lane hands
+# stdout to xterm.js in ~4KiB chunks, so a frame can reach the eye as the erase first
+# and the text a frame later. BSU/ESU makes the frame atomic at the far end.
+
+# DEVICE state, off until tuish_init raises it — which is why every assertion above
+# this line still sees exactly the bytes under test.
+_tuish_buffering=0
+assert_eq "$_tuish_sync" "0" "sync is off until the device comes up"
+_out=$( _tuish_buffering=0; tuish_save_cursor )
+assert_eq "$_out" "${_esc}7" "sync off: the write is untouched"
+
+_tuish_sync=1
+_out=$( _tuish_buffering=0; tuish_save_cursor )
+assert_eq "$_out" "${_esc}[?2026h${_esc}7${_esc}[?2026l" "sync on: one BSU/ESU pair around the write"
+
+# The pair wraps the whole frame, not each escape inside it. (Each frame here opens
+# from a clean depth: the tuish_end that closes it runs in a subshell, so the parent
+# is left holding the frame it opened.)
+_tuish_buffering=0
+tuish_begin; tuish_move 3 4; tuish_print 'hi'; _out=$( tuish_end )
+assert_eq "$_out" "${_esc}[?2026h${_esc}[3;4Hhi${_esc}[?2026l" "one pair per frame, not per write"
+
+# A held write is a CHILD's frame being spliced into its host's. It is not a device
+# write yet, so wrapping it here would nest a pair inside the host's — and the host's
+# tuish_end is what actually reaches the terminal.
+_tuish_buffering=0; _tuish_holding=1; _tuish_hold=''
+tuish_begin; tuish_print 'x'; tuish_end
+assert_eq "$_tuish_hold" "x" "a held (child) frame is not wrapped — the host's write is"
+_tuish_holding=0; _tuish_hold=''
+
+# printf is the output lane on most shells, so the frame is a format string. A literal
+# percent in app content must survive the added prefix.
+_tuish_buffering=0
+tuish_begin; tuish_print '100%'; _out=$( tuish_end )
+assert_eq "$_out" "${_esc}[?2026h100%${_esc}[?2026l" "a literal percent survives the wrap"
+
+_tuish_sync=0
+
 test_summary

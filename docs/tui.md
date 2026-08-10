@@ -78,6 +78,32 @@ your part of it.
 `tuish_end` below depth zero is a no-op, not an underflow, so one unbalanced app cannot
 wedge the loop into never flushing again.
 
+### One write is not one repaint
+
+Batching a frame into a single `write(2)` is not the same as the terminal *drawing* it
+at once, and the gap is where a lot of apparent blink lives. The browser lane hands
+stdout to xterm.js in ~4 KiB `postMessage` chunks, so a full-screen frame can reach the
+eye as the erase first and the text a frame later. tmux and a loaded emulator can split
+one the same way.
+
+So every write to the device is wrapped in DECSET 2026 (BSU/ESU) — "hold the screen
+until I say go". It costs 12 bytes per write and makes the frame atomic at the far end.
+The wrap is per **write**, not per `tuish_begin`/`tuish_end` pair, because `tuish_flush`
+deliberately emits a partial frame mid-handler and that partial wants to land whole too.
+
+This is the difference between "repainting everything blinks" and "repainting everything
+is invisible", which is most of what an app's dirty-tracking was buying.
+
+| Variable     | Default | Description                                            |
+|--------------|---------|--------------------------------------------------------|
+| `TUISH_SYNC` | `1`     | Wrap device writes in synchronized output (launcher config) |
+
+Terminals that do not implement it ignore the private mode, so there is nothing to
+detect. Two places it will not help: the bare Linux VT has no synchronized output at
+all, and it cannot make a frame arrive sooner — only whole. Set
+`TUISH_SYNC=0` when debugging a renderer, since making a half-drawn frame invisible is
+also a way to hide a bug that draws one.
+
 ## Cursor Basics
 
 | Function               | Description                        |

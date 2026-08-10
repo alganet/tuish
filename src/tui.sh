@@ -39,6 +39,9 @@
 #                            (default: 0.02, or 1 for second timing). Well-formed
 #                            CSI/SS3 sequences dispatch on their final byte without
 #                            waiting; this only bounds a lone ESC or an Alt-<key>.
+#   TUISH_SYNC             - wrap device writes in synchronized output, DECSET 2026
+#                            (default: 1). Set to 0 when debugging a renderer: an
+#                            atomic frame also hides a frame that draws half of itself.
 
 # ─── Dependencies ─────────────────────────────────────────────────
 # Source compat.sh before this file.  It provides:
@@ -70,10 +73,36 @@ _tuish_buffering=0
 # uses it to fold a child's first paint into the host's frame.
 _tuish_holding=0
 _tuish_hold=''
+
+# One buffer, one write — but one write is NOT one repaint, and that gap is where the
+# blink lives. Nothing promises the terminal draws a write atomically: the browser lane
+# hands stdout to xterm.js in ~4KiB postMessages, so a full-screen frame arrives as the
+# erase first and the text a frame later; tmux and a loaded emulator can split one the
+# same way. What you see is the app blinking, and the reflex is to paint less, which is
+# how an app ends up hand-tracking what changed for a reason that was never about
+# change.
+#
+# DECSET 2026 (BSU/ESU) says "hold the screen until I say go". Wrapping the write costs
+# 12 bytes and makes the frame atomic at the far end, so repainting everything stops
+# being visible as repainting.
+#
+# It goes HERE, around each actual device write, rather than around tuish_begin/end:
+# tuish_flush deliberately emits a PARTIAL frame mid-handler (the editor echoing a
+# keystroke ahead of its deferred redraw), and that partial still wants to land whole.
+# Per sink write means every chunk the terminal receives is atomic, whichever way the
+# frame was cut.
+#
+# _tuish_sync is DEVICE state, and off until tuish_init turns it on: unknown DEC private
+# modes are ignored by every terminal that does not know them, but a unit test that
+# stubs the device and reads back bytes should see exactly the bytes under test. The
+# bare Linux VT has no synchronized output at all and ignores it too.
+_tuish_sync=0
 _tuish_sink ()
 {
 	if test $_tuish_holding -eq 1
 	then _tuish_hold="${_tuish_hold}${1:-}"
+	elif test $_tuish_sync -eq 1
+	then _tuish_out "\033[?2026h${1:-}\033[?2026l"
 	else _tuish_out "${1:-}"
 	fi
 }
@@ -1448,6 +1477,16 @@ _tuish_init_term ()
 	_tuish_write '\033[777h'     # ambiguous width
 	_tuish_write '\033[?7l'      # DECAWM off: clip at right edge
 
+	# Frames become atomic from here on (see _tuish_sink). Launcher config, like
+	# TUISH_IDLE_TIMEOUT above it: read once, never written back. Set TUISH_SYNC=0 to
+	# opt out — worth having because BSU/ESU is the one setting that can HIDE a
+	# rendering bug, by making a half-drawn frame invisible instead of merely brief.
+	#
+	# A `case`, not `test -eq`: this reads a value a human typed, and `-eq` on a
+	# non-number ("no", "false") writes "integer expression expected" to the one
+	# stream the app is about to draw on. Anything that is not exactly 0 opts in.
+	case "${TUISH_SYNC:-1}" in 0) ;; *) _tuish_sync=1;; esac
+
 	TUISH_PROTOCOL='vt'
 
 	# Set tab stops
@@ -1591,6 +1630,10 @@ tuish_fini ()
 	_tuish_cursor_shape_dev=''
 	_tuish_cursor_shape_set=0
 	tuish_show_cursor
+	# Stop wrapping writes before the last one goes out, so teardown leaves the stream
+	# exactly as it found it. BSU is self-closing per write, so there is no unbalanced
+	# ESU to worry about — this only stops NEW ones.
+	_tuish_sync=0
 
 	# Restore stty: prefer the exact saved state so a faithful snapshot
 	# (e.g. IUTF8, and any terminal-specific flags) is preserved. Fall back
