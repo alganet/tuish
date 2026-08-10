@@ -12,6 +12,23 @@
 # WASD or the arrow keys, jump with Space / W / Up. Reach 🏁, grab 🪙, dodge 👾
 # and the 🌵 / 🔥. R restarts, Q quits.
 #
+# THE DELTA RENDERER IS NOT A WORKAROUND, and this was checked rather than
+# assumed. Measured on a 100x30 room: _render_full 4772us, _render_delta 366us —
+# 13x. Unlike the "repaint everything and let the framework sort it out" advice in
+# docs/event.md, that gap is not about redundant OUTPUT that something downstream
+# could drop; it is the cost of COMPOSING every cell of the board, which nothing
+# downstream can give back. At a 0.02s tick a full frame is a quarter of the
+# budget before physics runs, and the shell-WASM target is far slower again.
+#
+# Nor is it something the str.sh width memo relieves: this file paints through
+# tuish_put_at, which skips the width pass by contract, so the memo measured no
+# change here at all (4800us -> 4772us). Two different costs with the same
+# symptom — worth telling apart before deleting anyone's bookkeeping.
+#
+# _hud_dirty is the same story in miniature: the HUD is a single tuish_text, but
+# at 290us it is 44% of a delta frame, and it changes only when a coin or a life
+# does. It stays too.
+#
 # INPUT: plain VT keyboard — no kitty, no press/release events. A movement key
 # steps the player exactly one tile, immediately — one tap, one tile: precise,
 # snappy fine movement. Gravity and jumps run on the idle tick. Works on ANY

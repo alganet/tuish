@@ -230,6 +230,53 @@ across all `tuish_request_redraw` calls. Level `-1` always wins. Among
 positive levels, the highest wins. The final level is passed to
 `tuish_on_redraw`.
 
+#### Start at -1 and stay there
+
+Levels used to be the answer to "how do I make this fast", and every app that
+grew past a few widgets built a ladder of them. Do not start there. **Ask for a
+full redraw and paint everything** — that is the version of the code that is
+obviously correct, and it is now cheap:
+
+- Measuring text, which used to dominate a Unicode frame, is memoized
+  (see [str.md](str.md#cost-and-the-memo)) — a representative chrome frame went
+  from 34 ms to 6.6 ms.
+- Frames are atomic, so a repaint is not visible as a repaint
+  (see [tui.md](tui.md#one-write-is-not-one-repaint)).
+- A field repainted with `width=N` never passes through a blank state
+  (see [term.md](term.md#widthn--fields-and-why-not-to-erase-first)).
+
+Reach for a partial level when you have **measured** that a specific path is too
+slow, and when what makes it slow is recomputing *state* — re-wrapping a
+document, re-querying something, rebuilding a list — rather than re-emitting
+output. Skipping output is the framework's problem. Skipping work only you know
+is unnecessary is yours.
+
+#### The line to measure against
+
+"Repaint everything" is advice about **output**, and there is a second cost it
+does not touch: some renderers are expensive to *compose*, independent of what
+they emit. Telling the two apart before deleting any bookkeeping is the whole
+skill, and the toolkit ships one of each:
+
+- `examples/session.sh` — its guards protect **bytes**. Dropping the background
+  gate takes a frame from 4434 to 7655 bytes; dropping the motion guard takes it
+  from 356 to 1163. Nothing is recomputed, the same picture is just re-sent.
+- `examples/game.sh` — its delta renderer protects **composition**. Full frame
+  4772 µs against 366 µs for the delta, and the width memo moved neither, because
+  the cost is walking every cell of the board, not measuring or writing it.
+
+The first kind is what a framework can eventually take over. The second is not:
+no amount of downstream cleverness gives back work the app already did to decide
+what a cell contains. If your partial path exists for the second reason, keep it,
+and say so where the next reader will look.
+
+> **If you do build a ladder, the levels must nest.** Because coalescing takes the
+> **maximum**, a cheap request that gets merged with an expensive one is *replaced*
+> by it — so level 3 must do everything level 2 does, or the cheap update is
+> silently dropped whenever the two land in the same frame. This constraint is easy
+> to miss and produces updates that go missing only under load. It is another
+> reason to prefer one full repaint.
+
 ### Simple example
 
 This works like the browser's `requestAnimationFrame`: event handlers update
@@ -264,7 +311,8 @@ no added latency.
 
 ### Multi-level example
 
-Use levels to skip expensive work when only a cheap update is needed:
+Use levels to skip expensive **state** work when only a cheap update is needed —
+after measuring, and remembering that the levels have to nest (see above):
 
 ```sh
 tuish_on_redraw ()

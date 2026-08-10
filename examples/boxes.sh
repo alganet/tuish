@@ -440,8 +440,10 @@ _bx_toggle_backend ()
 		unicode) TUISH_DRAW_BACKEND='ascii';;
 		*)       TUISH_DRAW_BACKEND='unicode';;
 	esac
-	# Invalidate style cache so it re-evaluates
-	_tuish_draw_cur_style=''
+	# No cache to invalidate by hand: _tuish_draw_set_style keys its cache on the
+	# backend as well as the style, so switching the backend misses it on the next
+	# draw and it re-evaluates itself. This used to poke _tuish_draw_cur_style from
+	# out here, which stopped being necessary when the cache learned the backend.
 	tuish_request_redraw
 }
 
