@@ -121,23 +121,28 @@ _tuish_clip_avail ()
 	test $_tuish_avail -lt 0 && _tuish_avail=0
 	return 0
 }
-# tuish_text ROW COL TEXT [fg=N] [bg=N] [maxwidth=N]
+# tuish_text ROW COL TEXT [fg=N] [bg=N] [maxwidth=N] [width=N]
 # The single text-placement entry point. Positions at viewport/canvas (ROW,COL)
 # via tuish_vmove and prints TEXT, optionally coloured and width-clipped. Works
 # in the minimal, str.sh-less profile (placement + colour only, letting the
 # terminal clip at the screen edge); when str.sh is sourced it additionally
-# honours maxwidth and trims to the display width that fits within
-# TUISH_VIEW_COLS — including trimming leading cells when COL lands left of
-# column 1 (e.g. under panning). Resets SGR only when it applied a colour, so
-# the plain form stays a pure place-and-print.
+# honours maxwidth/width and trims to the display width that fits the visible
+# window — including trimming leading cells when COL lands left of column 1
+# (e.g. under panning). Resets SGR only when it applied a colour, so the plain
+# form stays a pure place-and-print.
+#
+# maxwidth=N caps the text at N columns. width=N makes it a FIELD: exactly N
+# columns, padded with spaces when the text is shorter. The padding is part of
+# the same run, which is the point — see the note above the pad below.
 tuish_text ()
 {
-	local _tt_row=$1 _tt_col=$2 _tt_text="$3" _tt_maxw=-1 _tt_fg=-1 _tt_bg=-1 _tt_esc=0
+	local _tt_row=$1 _tt_col=$2 _tt_text="$3" _tt_maxw=-1 _tt_fg=-1 _tt_bg=-1 _tt_esc=0 _tt_fw=-1
 	shift 3
 	while test $# -gt 0
 	do
 		case "$1" in
 			maxwidth=*) _tt_maxw="${1#*=}";;
+			width=*)    _tt_fw="${1#*=}";;
 			fg=*)       _tt_fg="${1#*=}";;
 			bg=*)       _tt_bg="${1#*=}";;
 		esac
@@ -148,80 +153,96 @@ tuish_text ()
 	# and let the terminal clip at the screen edge. All right-edge trims go through
 	# _tuish_clip_avail (the true visible window), never TUISH_VIEW_COLS, so text
 	# clips at a hosted region's edge rather than bleeding to the screen edge.
-	if type tuish_str_width >/dev/null 2>&1
+	#
+	# Asked via str.sh's own load guard rather than `type tuish_str_width`: this runs
+	# on EVERY text draw, and the builtin lookup with its two redirections measured
+	# 15us against 2us for the variable test — ~13us back on every label in every
+	# frame. The guard is set before str.sh defines anything, so the only window where
+	# the two disagree is mid-source, which is not a time anyone paints.
+	if test -n "${_tuish_str_loaded:-}"
 	then
-		case "$_tt_text" in
-		*"${_tuish_chr_27}["*)
-			# Escape-aware path: the text carries SGR runs, whose bytes tuish_str_width
-			# would miscount as visible columns and could be split mid-sequence. Do the
-			# left+right clip in ONE SGR-correct slice via tuish_str_window (offset =
-			# leading cells to drop, window = cells that fit). Force a trailing reset
-			# below: a colour run's own reset may have been past the right cut.
-			# Keyed on ESC '[' specifically — CSI is the only escape form
-			# tuish_str_window knows how to skip, so an OSC or SS3 in the text stays on
-			# the plain path it has always taken instead of being sliced as columns.
-			local _tt_off=0
-			if test $_tt_col -lt 1
-			then _tt_off=$((1 - _tt_col)); _tt_col=1; fi
-			# _tuish_clip_avail reports the columns that EXIST; whether text honours
-			# them is this caller's policy, and _tuish_wrap=1 means it does not.
-			local _tt_win=$_TUISH_NOCLIP
-			if test $_tuish_wrap -eq 0
-			then _tuish_clip_avail $_tt_col; _tt_win=$_tuish_avail; fi
-			# maxwidth counts from the string's own start, exactly as on the plain path
-			# below (which truncates to maxwidth BEFORE trimming the scrolled-off head),
-			# so the two paths clip a left-scrolled field to the same cells.
-			if test $_tt_maxw -ge 0
-			then
-				local _tt_mw=$(( _tt_maxw - _tt_off ))
-				test $_tt_mw -lt $_tt_win && _tt_win=$_tt_mw
-			fi
-			test $_tt_win -lt 1 && return 0
+		# Whole placement off the right of the visible window: nothing to draw.
+		if test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0 \
+		   && test $_tt_col -gt $_tx_lcmax
+		then return 0; fi
+
+		# ONE slice does the left and right clip together, in DISPLAY COLUMNS.
+		#
+		# There used to be a second, "plain" path here that clipped with
+		# tuish_str_left/right instead — and those count CHARACTERS. For ASCII the two
+		# units coincide, which is why it looked correct for years; for anything wider
+		# they do not. `tuish_text 1 1 "$cjk" maxwidth=6` emitted 12 columns, and a
+		# 36-column CJK string placed in a 20-column hosted region emitted all 36,
+		# straight through the host's right border — the bleed the clipped tier was
+		# supposed to be immune to. tuish_str_window is the only column-correct slicer
+		# (it also refuses to split a CSI run, and drops rather than halves a wide char
+		# that would straddle the right edge), so everything goes through it.
+		#
+		# CSI is the only escape form it knows to skip. Text carrying an OSC or SS3 has
+		# those bytes counted as columns and can be cut mid-sequence — unchanged from
+		# before (the old plain path measured them as columns too), and still wrong.
+		# Fixing it means teaching tuish_str_window the other escape forms.
+		local _tt_off=0
+		if test $_tt_col -lt 1
+		then _tt_off=$((1 - _tt_col)); _tt_col=1; fi
+		# _tuish_clip_avail reports the columns that EXIST; whether text honours
+		# them is this caller's policy, and _tuish_wrap=1 means it does not.
+		local _tt_win=$_TUISH_NOCLIP
+		if test $_tuish_wrap -eq 0
+		then _tuish_clip_avail $_tt_col; _tt_win=$_tuish_avail; fi
+		# maxwidth and width both count from the string's OWN start, so a
+		# left-scrolled field clips to the same cells either way.
+		if test $_tt_maxw -ge 0
+		then
+			local _tt_mw=$(( _tt_maxw - _tt_off ))
+			test $_tt_mw -lt $_tt_win && _tt_win=$_tt_mw
+		fi
+		if test $_tt_fw -ge 0
+		then
+			local _tt_fwa=$(( _tt_fw - _tt_off ))
+			test $_tt_fwa -lt $_tt_win && _tt_win=$_tt_fwa
+		fi
+		test $_tt_win -lt 1 && return 0
+
+		# Does it need slicing at all? Text that starts at the left edge, fits the
+		# window, and is not being padded into a field comes out verbatim — no slice,
+		# no copy. That is not only the cheap case, it is the PORTABLE one:
+		# tuish_str_window indexes with ${var:off:len}, which every shell this toolkit
+		# targets has but plain POSIX sh does not (REPORT.md X2). Keeping the
+		# fits-as-is case off that path is what lets the primitives degrade gracefully
+		# on a shell that only ever needed to place and print.
+		#
+		# Only safe to decide with tuish_str_width when the text carries no CSI, whose
+		# bytes it would miscount as visible columns.
+		local _tt_esc_in=0
+		case "$_tt_text" in *"${_tuish_chr_27}["*) _tt_esc_in=1;; esac
+		local _tt_slice=1
+		if test $_tt_esc_in -eq 0 && test $_tt_off -eq 0 && test $_tt_fw -lt 0
+		then
+			tuish_str_width _tt_text
+			test $TUISH_SWIDTH -le $_tt_win && _tt_slice=0
+		fi
+
+		if test $_tt_slice -eq 1
+		then
 			tuish_str_window _tt_text $_tt_off $_tt_win
 			_tt_text=$TUISH_SWINDOW
-			_tt_esc=1
-			;;
-		*)
-			# Plain fast path: no embedded SGR, so display width == tuish_str_width.
-			# Whole placement off the right of the visible window: nothing to draw.
-			if test $_tuish_wrap -eq 0 && test $TUISH_VIEW_COLS -gt 0 \
-			   && test $_tt_col -gt $_tx_lcmax
-			then return 0; fi
+			# Force a trailing reset when the text carried SGR of its own: a colour
+			# run's own reset may have been past the right cut.
+			_tt_esc=$_tt_esc_in
 
-			# str helpers take a variable NAME — pass _tt_text directly.
-			tuish_str_width _tt_text
-			local _tt_w=$TUISH_SWIDTH
-
-			if test $_tt_maxw -ge 0 && test $_tt_w -gt $_tt_maxw
+			# width=N: pad the slice out to the field. This is the whole reason the
+			# option exists. What an app writes without it is erase-then-print — a
+			# tuish_clear_to_edge (or a draw_fill) over the field, then the text on top
+			# — which touches every cell TWICE per frame with a blank state in between.
+			# One write, no blank state, and the padding carries bg= like the text
+			# does, so a coloured field needs no separate fill underneath it.
+			if test $_tt_fw -ge 0 && test $TUISH_SWINDOW_W -lt $_tt_win
 			then
-				tuish_str_left _tt_text $_tt_maxw
-				_tt_text=$TUISH_SLEFT
-				_tt_w=$_tt_maxw
+				_tuish_repeat ' ' $(( _tt_win - TUISH_SWINDOW_W ))
+				_tt_text="${_tt_text}${_tuish_rep}"
 			fi
-
-			# Left-edge clip: trim leading characters when COL < 1.
-			if test $_tt_col -lt 1
-			then
-				tuish_str_right _tt_text $((1 - _tt_col))
-				_tt_text=$TUISH_SRIGHT
-				_tt_col=1
-				tuish_str_width _tt_text
-				_tt_w=$TUISH_SWIDTH
-			fi
-
-			# Right-edge clip: trim to the columns that fit the visible window.
-			# _tuish_wrap=1 is this caller opting out — let the terminal wrap instead.
-			if test $_tuish_wrap -eq 0
-			then
-				_tuish_clip_avail $_tt_col
-				if test $_tt_w -gt $_tuish_avail
-				then
-					tuish_str_left _tt_text $_tuish_avail
-					_tt_text=$TUISH_SLEFT
-				fi
-			fi
-			;;
-		esac
+		fi
 
 		test -z "$_tt_text" && return 0
 	fi

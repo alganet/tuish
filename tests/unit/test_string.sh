@@ -211,4 +211,21 @@ _t="X${_e}[1;33mY"
 tuish_str_window _t 0 1;  assert_eq "$TUISH_SWINDOW" "X${_e}[1;33m"           "window sgr: CSI before clip carried (colour state), never split"
 tuish_str_window _t 1 1;  assert_eq "$TUISH_SWINDOW" "${_e}[1;33mY"           "window sgr: multi-param CSI kept whole"
 
+# --- tuish_str_pad ---
+# Fits a string to exactly N display columns. The pad loop it replaces was
+# hand-written in three examples, each counting characters.
+_t='hi';    tuish_str_pad _t 5; assert_eq "$TUISH_SPADDED" 'hi   ' "pad: short string is padded to width"
+_t='hello'; tuish_str_pad _t 5; assert_eq "$TUISH_SPADDED" 'hello' "pad: exact fit is untouched"
+_t='hello'; tuish_str_pad _t 3; assert_eq "$TUISH_SPADDED" 'hel'   "pad: long string is sliced to width"
+_t='';      tuish_str_pad _t 3; assert_eq "$TUISH_SPADDED" '   '   "pad: empty string becomes all padding"
+_t='hi';    tuish_str_pad _t 0; assert_eq "$TUISH_SPADDED" ''      "pad: zero width is empty"
+
+# Columns, not characters: two ideographs are four columns, so a width of 6 pads two.
+_t='日本'; tuish_str_pad _t 6; assert_eq "$TUISH_SPADDED" '日本  ' "pad: wide chars count their columns"
+# An odd budget cannot hold a 2-column glyph: it is dropped, and the pad makes up
+# the gap, so the result is still exactly WIDTH columns.
+_t='日本'; tuish_str_pad _t 3
+_pw=$TUISH_SPADDED; tuish_str_width _pw
+assert_eq "$TUISH_SWIDTH" "3" "pad: straddling glyph dropped, pad still fills the field"
+
 test_summary

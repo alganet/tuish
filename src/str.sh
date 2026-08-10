@@ -12,6 +12,7 @@ _tuish_str_loaded=1
 #   tuish_str_len/left/right/char - character-level string ops (byte-mode UTF-8)
 #   tuish_str_width              - display width (columns)
 #   tuish_str_window             - visible slice of a horizontal column-window
+#   tuish_str_pad                - fit to exactly N display columns
 #   tuish_str_repeat             - O(log n) string repetition
 #   _tuish_char_width()          - codepoint → display width
 #   _tuish_byte_val/utf8_len/char_byte_off - UTF-8 internals
@@ -87,6 +88,30 @@ tuish_str_repeat ()
 	TUISH_SREPEATED=$_tuish_rep
 }
 
+# tuish_str_pad VAR WIDTH -> TUISH_SPADDED
+# VAR's value fitted to exactly WIDTH display COLUMNS: space-padded when it is
+# narrower, sliced when it is wider.
+#
+# The string counterpart of `tuish_text ... width=N` (term.md). Use that one when the
+# field is the whole write; use this one when the row is assembled from several pieces
+# and printed as a unit, which is the case that was hand-rolling a pad loop.
+#
+# Columns, not characters — it goes through tuish_str_window, so it counts a CJK
+# ideograph as the two columns it occupies, skips SGR runs rather than counting their
+# bytes, and drops (never splits) a wide glyph that would straddle the cut. That last
+# case leaves the slice a column short of WIDTH, which the pad then makes up, so the
+# result is WIDTH columns either way.
+tuish_str_pad ()
+{
+	tuish_str_window "$1" 0 "$2"
+	TUISH_SPADDED=$TUISH_SWINDOW
+	if test $TUISH_SWINDOW_W -lt $2
+	then
+		_tuish_repeat ' ' $(( $2 - TUISH_SWINDOW_W ))
+		TUISH_SPADDED="${TUISH_SPADDED}${_tuish_rep}"
+	fi
+}
+
 # ─── Text width (display columns) ────────────────────────────────
 # UTF-8 decode → codepoint → width classification.
 # Result in TUISH_SWIDTH. Takes a variable NAME.
@@ -149,7 +174,13 @@ tuish_str_width ()
 }
 
 # ─── Horizontal window (display columns) ─────────────────────────
-# tuish_str_window VAR OFFSET WIDTH -> TUISH_SWINDOW
+# tuish_str_window VAR OFFSET WIDTH -> TUISH_SWINDOW, TUISH_SWINDOW_W
+#
+# TUISH_SWINDOW_W is the display width of the slice, which is <= WIDTH and not
+# recoverable by measuring the result: the slice may carry SGR runs (zero columns,
+# arbitrary bytes) and a wide char that would have crossed the right edge is dropped
+# rather than split, leaving the slice a column short. A caller padding the slice out
+# to a field needs the number the slicer already knows.
 #
 # The slice of VAR visible in a horizontal window OFFSET columns from the left,
 # WIDTH columns wide — i.e. the characters occupying display columns
@@ -169,11 +200,13 @@ tuish_str_window ()
 	case "$_tuish_wn_str" in *[![:print:]]*) ;; *)
 		TUISH_SWINDOW=''
 		test "$_tuish_wn_off" -lt "$_tuish_wn_len" && TUISH_SWINDOW="${_tuish_wn_str:$_tuish_wn_off:$_tuish_wn_w}"
+		# Every char is one column here, so the byte count IS the width.
+		TUISH_SWINDOW_W=${#TUISH_SWINDOW}
 		return 0;;
 	esac
 	# Slow path: decode UTF-8 (mirrors tuish_str_width), tracking the running
 	# display column _tuish_wn_col (the start column of the current char).
-	local _tuish_wn_i=0 _tuish_wn_col=0 _tuish_wn_b0 _tuish_wn_b1 _tuish_wn_b2 _tuish_wn_cp _tuish_wn_n _tuish_wn_ch _tuish_wn_j _tuish_wn_out=''
+	local _tuish_wn_i=0 _tuish_wn_col=0 _tuish_wn_b0 _tuish_wn_b1 _tuish_wn_b2 _tuish_wn_cp _tuish_wn_n _tuish_wn_ch _tuish_wn_j _tuish_wn_out='' _tuish_wn_ow=0
 	while test $_tuish_wn_i -lt $_tuish_wn_len
 	do
 		_tuish_ord "${_tuish_wn_str:$_tuish_wn_i:1}"; _tuish_wn_b0=$_tuish_code
@@ -222,15 +255,17 @@ tuish_str_window ()
 		elif test $_tuish_wn_col -ge $_tuish_wn_end
 		then break                               # entirely right (and all after)
 		elif test $_tuish_wn_col -lt $_tuish_wn_off
-		then _tuish_wn_out="${_tuish_wn_out} "  # left straddle: visible right half
+		then _tuish_wn_out="${_tuish_wn_out} "; _tuish_wn_ow=$((_tuish_wn_ow + 1))  # left straddle: visible right half
 		elif test $((_tuish_wn_col + _tuish_cw)) -gt $_tuish_wn_end
 		then break                               # right straddle: does not fit, drop
 		else _tuish_wn_out="${_tuish_wn_out}${_tuish_wn_ch}"   # fully inside
+		     _tuish_wn_ow=$((_tuish_wn_ow + _tuish_cw))
 		fi
 		_tuish_wn_col=$((_tuish_wn_col + _tuish_cw))
 		_tuish_wn_i=$((_tuish_wn_i + _tuish_wn_n))
 	done
 	TUISH_SWINDOW=$_tuish_wn_out
+	TUISH_SWINDOW_W=$_tuish_wn_ow
 }
 
 # ─── Codepoint width classification ──────────────────────────────

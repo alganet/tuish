@@ -275,4 +275,72 @@ assert_eq "$_cc" "60" "tuish_text under autowrap: still untrimmed (the policy su
 _tuish_wrap=0
 _tuish_tx_reset; _tuish_buf=''; _tuish_buffering=0
 
+# ─── Wide characters clip in COLUMNS, not characters ─────────────
+# The regression this covers: tuish_text's plain path trimmed with
+# tuish_str_left/right, which count CHARACTERS. For ASCII the two units coincide,
+# so it read as correct for as long as the toolkit was ASCII-first. For anything
+# wider they diverge by exactly the character's width — a 36-column CJK string
+# placed in a 20-column region emitted all 36, straight through the host's right
+# border. Same bleed bleed-report.md describes, reached through the tier that was
+# supposed to be immune to it.
+TUISH_LINES=24; TUISH_COLUMNS=80; TUISH_VIEW_COLS=20; TUISH_VIEW_TOP=1; _tuish_wrap=0
+_tuish_tx_reset
+
+# 18 CJK ideographs = 36 columns, into a 20-column region.
+_cjk=''; _i=0; while test $_i -lt 18; do _cjk="${_cjk}日"; _i=$((_i + 1)); done
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 "$_cjk"
+_body=${_tuish_buf#*H}; _w=$_body; tuish_str_width _w
+assert_eq "$TUISH_SWIDTH" "20" "tuish_text: wide text clips to the region in COLUMNS"
+
+# maxwidth is a column budget too — 6 must mean 3 ideographs, not 6.
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 "$_cjk" maxwidth=6
+_body=${_tuish_buf#*H}; _w=$_body; tuish_str_width _w
+assert_eq "$TUISH_SWIDTH" "6" "tuish_text: maxwidth counts columns, not characters"
+
+# An odd budget cannot be filled by 2-column cells: the straddling char is dropped
+# rather than half-drawn, so the result is one column short. Short is correct; a
+# split wide char would corrupt the cell to its right.
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 "$_cjk" maxwidth=5
+_body=${_tuish_buf#*H}; _w=$_body; tuish_str_width _w
+assert_eq "$TUISH_SWIDTH" "4" "tuish_text: a wide char straddling the cut is dropped, not split"
+
+# ─── width=N — the one-pass field ────────────────────────────────
+# Erase-then-print touches every cell twice with a blank state between the two.
+# width=N is the same field in one run, so there is no intermediate blank to see.
+TUISH_VIEW_COLS=40; _tuish_tx_reset
+
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 'hi' width=10
+_body=${_tuish_buf#*H}
+assert_eq "$_body" "hi        " "width=N: short text is padded to the field, in ONE run"
+
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 'hello world' width=5
+_body=${_tuish_buf#*H}
+assert_eq "$_body" "hello" "width=N: long text is truncated to the field"
+
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 'exact' width=5
+_body=${_tuish_buf#*H}
+assert_eq "$_body" "exact" "width=N: an exact fit is neither padded nor cut"
+
+# Padding is capped by the visible window like everything else — a field wider than
+# the region must not pad its way through the host's border.
+tuish_begin; _tuish_buf=''; _tx_lcmax=8
+tuish_text 1 1 'ab' width=30
+_body=${_tuish_buf#*H}
+assert_eq "${#_body}" "8" "width=N: the pad clips at the visible window, it does not bleed"
+_tuish_tx_reset
+
+# A wide char counts its columns against the field, so the pad makes up the rest.
+tuish_begin; _tuish_buf=''
+tuish_text 1 1 '日本' width=6
+_body=${_tuish_buf#*H}; _w=$_body; tuish_str_width _w
+assert_eq "$TUISH_SWIDTH" "6" "width=N: field width is columns, so wide text pads correctly"
+
+_tuish_tx_reset; _tuish_buf=''; _tuish_buffering=0
+
 test_summary
