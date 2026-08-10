@@ -17,6 +17,17 @@ TESTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 . "$TESTS_DIR/../src/str.sh"
 
 
+# Probes for the skip-list assertions at the bottom, defined HERE because they have to
+# exist before the fixup runs to be converted by it — and named _tuish_* because that is
+# the prefix _tuish_fnfix_emit converts. Each one holds the string in a `local` and hands
+# the str helper its NAME, which is the shape the whole toolkit is built on.
+_tuish_probe_pad ()    { local _s='hi';     tuish_str_pad    _s 5;   TUISH_SPADDED=$TUISH_SPADDED; }
+_tuish_probe_left ()   { local _s='日本語'; tuish_str_left   _s 2;   TUISH_SLEFT=$TUISH_SLEFT; }
+_tuish_probe_right ()  { local _s='日本語'; tuish_str_right  _s 2;   TUISH_SRIGHT=$TUISH_SRIGHT; }
+_tuish_probe_char ()   { local _s='日本語'; tuish_str_char   _s 1;   TUISH_SCHAR=$TUISH_SCHAR; }
+_tuish_probe_window () { local _s='日本語'; tuish_str_window _s 0 4; TUISH_SWINDOW=$TUISH_SWINDOW; }
+_tuish_probe_width ()  { local _s='日本語'; tuish_str_width  _s;     TUISH_SWIDTH=$TUISH_SWIDTH; }
+
 # Exercise the SHIPPED configuration. tuish_fnfix normally fires from tuish_init, which unit
 # tests deliberately never call (they stub the device) — so without this, every suite here
 # would validate the framework with its ksh `local` still leaking, i.e. not the library that
@@ -110,5 +121,20 @@ assert_eq "$TUISH_SWIDTH" "1" "width: base + combining diacritical supplement"
 _t='각'
 tuish_str_width _t
 assert_eq "$TUISH_SWIDTH" "2" "width: decomposed Hangul (leading + conjoining jamo)"
+
+# --- the skip list is not optional ---
+# Every helper that dereferences a variable NAME must be in compat.sh's
+# _tuish_fnfix_skip. Converted to ksh-style it gets its own scope, and the caller's
+# local — the name it was just handed — becomes invisible: on ksh93 that is not a wrong
+# answer but a hard `parameter not set`, which takes the app down. It reads as correct on
+# every other shell, and on ksh only when the caller happens to be an APP function (whose
+# `local` leaks to global there), so the trap is easy to walk into and cost-free to guard.
+# The probes above the fixup call are converted, so a name dropped from the list fails here.
+_tuish_probe_pad;    assert_eq "$TUISH_SPADDED" 'hi   ' "skip list: tuish_str_pad sees a converted caller's local"
+_tuish_probe_left;   assert_eq "$TUISH_SLEFT"   '日本'  "skip list: tuish_str_left (via _tuish_char_byte_off) sees it"
+_tuish_probe_right;  assert_eq "$TUISH_SRIGHT"  '語'    "skip list: tuish_str_right sees it"
+_tuish_probe_char;   assert_eq "$TUISH_SCHAR"   '本'    "skip list: tuish_str_char sees it"
+_tuish_probe_window; assert_eq "$TUISH_SWINDOW" '日本'  "skip list: tuish_str_window sees it"
+_tuish_probe_width;  assert_eq "$TUISH_SWIDTH"  '6'     "skip list: tuish_str_width sees it"
 
 test_summary

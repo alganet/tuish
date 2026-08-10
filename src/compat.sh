@@ -98,6 +98,12 @@ fi
 #    even when the caller is a converted ksh function. That asymmetry is what makes the
 #    whole scheme work, and it is why the skip list is a design decision, not a wart.
 #
+#    The rule is "dereferences a variable NAME", not "is public": it reaches THROUGH the
+#    public entry points to the private helpers they hand the name on to. _tuish_byte_val
+#    and _tuish_char_byte_off are here for that reason — a converted _tuish_char_byte_off
+#    takes tuish_str_left/right/char's whole non-ASCII path down with it, on the one shell
+#    this file exists to serve. Adding a name-taking helper means adding it here.
+#
 # 3. THE BLOCKING LOOP. Worse than local traps: entering a ksh-style function RESETS traps
 #    to their default for that scope, so a signal arriving while ANY ksh function is on the
 #    stack is not deferred — it is DISCARDED. WINCH's default is "ignore". tuish_run is
@@ -109,7 +115,7 @@ fi
 # ONE LINE, deliberately: the lookup is `case $skip in *" $name "*)`, so every entry has to
 # be space-delimited on BOTH sides. Wrap this onto a second line and the last name on each
 # line is followed by a newline instead of a space, and silently stops being skipped.
-_tuish_fnfix_skip=' _tuish_fnfix tuish_init _tuish_device_init _tuish_init_term tuish_fini tuish_run _tuish_byte_val tuish_str_char tuish_str_left tuish_str_len tuish_str_right tuish_str_width tuish_str_window '
+_tuish_fnfix_skip=' _tuish_fnfix tuish_init _tuish_device_init _tuish_init_term tuish_fini tuish_run _tuish_byte_val _tuish_char_byte_off tuish_str_char tuish_str_left tuish_str_len tuish_str_pad tuish_str_right tuish_str_width tuish_str_window '
 
 # Does `local` leak out of a POSIX function in this shell?
 _tuish_fnfix_leaks ()
