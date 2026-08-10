@@ -21,6 +21,76 @@ _tuish_str_loaded=1
 #
 # Requires LC_ALL=C (set by compat.sh) for byte-oriented string indexing.
 
+# ─── Decode memo (exact-match MRU) ───────────────────────────────
+# Every function below opens with an ASCII fast path and falls back to a
+# byte-by-byte UTF-8 decode. The gap between the two is not a constant factor:
+# measured on this tree, tuish_str_width costs 16us on 64 ASCII columns and
+# 4499us on a 60-column box rule (60x U+2500) — and ONE non-ASCII byte forfeits
+# the fast path for the whole string, so a 20-column label with a single '┤' in
+# it costs 498us. tuish_text runs a width on EVERY text draw (term.sh), and the
+# default draw backend is unicode, so a UTF-8 app pays milliseconds per label
+# before a byte reaches the terminal. That is the 266ms frame docs/event.md
+# sizes TUISH_DEFER_MAX against.
+#
+# What makes it cacheable is that the expensive strings are the REPEATED ones:
+# rules, borders, box chrome and fixed labels are redrawn verbatim every frame,
+# while the content that genuinely differs row to row is usually prose, which
+# takes the ASCII path anyway and is already 16us. So a handful of slots is
+# enough — this is not a general cache, it is a guard against re-deriving the
+# same chrome N times per frame and again next frame.
+#
+# The key is the EXACT string (tagged, and with the numeric arguments folded in
+# where they change the answer), compared by `case` with the pattern quoted so
+# it matches literally — a rule made of '*' or '?' must not glob onto a
+# different entry. The value can therefore never be wrong: the only failure mode
+# is a miss, which costs the comparisons and then runs the decoder that was
+# going to run anyway.
+#
+# Only the SLOW paths consult it. An ASCII string never looks itself up and
+# never evicts anything, so the fast path stays exactly as cheap as it was.
+#
+# Plain globals, and they have to be: the whole point is to outlive the call that
+# filled them. That also keeps _tuish_memo_get/_put off compat.sh's
+# _tuish_fnfix_skip — they declare nothing, and they take the key by VALUE rather
+# than by variable name, so converting them to ksh-style scoping changes nothing.
+# The functions that CONSULT the memo take a name and are on that list already.
+_tuish_memo_k0='' _tuish_memo_k1='' _tuish_memo_k2='' _tuish_memo_k3=''
+_tuish_memo_k4='' _tuish_memo_k5='' _tuish_memo_k6='' _tuish_memo_k7=''
+_tuish_memo_v0='' _tuish_memo_v1='' _tuish_memo_v2='' _tuish_memo_v3=''
+_tuish_memo_v4='' _tuish_memo_v5='' _tuish_memo_v6='' _tuish_memo_v7=''
+_tuish_memo_val=''
+
+# _tuish_memo_get KEY -> 0 and _tuish_memo_val on a hit, 1 on a miss.
+# Slots start empty and every real key carries a non-empty tag, so an untouched
+# slot cannot be hit by a lookup of the empty string.
+_tuish_memo_get ()
+{
+	case "$1" in
+	"$_tuish_memo_k0") _tuish_memo_val=$_tuish_memo_v0; return 0;;
+	"$_tuish_memo_k1") _tuish_memo_val=$_tuish_memo_v1; return 0;;
+	"$_tuish_memo_k2") _tuish_memo_val=$_tuish_memo_v2; return 0;;
+	"$_tuish_memo_k3") _tuish_memo_val=$_tuish_memo_v3; return 0;;
+	"$_tuish_memo_k4") _tuish_memo_val=$_tuish_memo_v4; return 0;;
+	"$_tuish_memo_k5") _tuish_memo_val=$_tuish_memo_v5; return 0;;
+	"$_tuish_memo_k6") _tuish_memo_val=$_tuish_memo_v6; return 0;;
+	"$_tuish_memo_k7") _tuish_memo_val=$_tuish_memo_v7; return 0;;
+	esac
+	return 1
+}
+
+# _tuish_memo_put KEY VALUE — insert at the front, drop the oldest.
+_tuish_memo_put ()
+{
+	_tuish_memo_k7=$_tuish_memo_k6; _tuish_memo_v7=$_tuish_memo_v6
+	_tuish_memo_k6=$_tuish_memo_k5; _tuish_memo_v6=$_tuish_memo_v5
+	_tuish_memo_k5=$_tuish_memo_k4; _tuish_memo_v5=$_tuish_memo_v4
+	_tuish_memo_k4=$_tuish_memo_k3; _tuish_memo_v4=$_tuish_memo_v3
+	_tuish_memo_k3=$_tuish_memo_k2; _tuish_memo_v3=$_tuish_memo_v2
+	_tuish_memo_k2=$_tuish_memo_k1; _tuish_memo_v2=$_tuish_memo_v1
+	_tuish_memo_k1=$_tuish_memo_k0; _tuish_memo_v1=$_tuish_memo_v0
+	_tuish_memo_k0=$1;              _tuish_memo_v0=$2
+}
+
 # ─── String utilities (byte-mode UTF-8 decoding) ─────────────────
 # All take a variable NAME to avoid subshell overhead.
 # Results in TUISH_SLEN, TUISH_SLEFT, TUISH_SRIGHT, TUISH_SCHAR.
@@ -123,6 +193,8 @@ tuish_str_width ()
 	# Fast path: under LC_ALL=C, [:print:] is exactly 0x20-0x7E.
 	# All printable ASCII chars have width 1, so width = byte count.
 	case "$_tuish_sw_str" in *[![:print:]]*) ;; *) TUISH_SWIDTH=$_tuish_sw_len; return;; esac
+	if _tuish_memo_get "w $_tuish_sw_str"
+	then TUISH_SWIDTH=$_tuish_memo_val; return; fi
 	# Slow path: decode UTF-8 inline over the local value. Working on the
 	# value (not a variable name) lets us read bytes with direct
 	# ${_tuish_sw_str:i:1} substrings, avoiding per-byte eval/indirection — the
@@ -171,6 +243,7 @@ tuish_str_width ()
 		_tuish_sw_w=$((_tuish_sw_w + _tuish_cw))
 	done
 	TUISH_SWIDTH=$_tuish_sw_w
+	_tuish_memo_put "w $_tuish_sw_str" "$_tuish_sw_w"
 }
 
 # ─── Horizontal window (display columns) ─────────────────────────
@@ -204,6 +277,15 @@ tuish_str_window ()
 		TUISH_SWINDOW_W=${#TUISH_SWINDOW}
 		return 0;;
 	esac
+	# Both the offset and the width change the answer, so both are in the key. The
+	# entry holds "<width> <slice>" — the width is not derivable from the slice (see
+	# the header), so caching the slice alone would lose it.
+	if _tuish_memo_get "n$2,$3 $_tuish_wn_str"
+	then
+		TUISH_SWINDOW_W=${_tuish_memo_val%% *}
+		TUISH_SWINDOW=${_tuish_memo_val#* }
+		return 0
+	fi
 	# Slow path: decode UTF-8 (mirrors tuish_str_width), tracking the running
 	# display column _tuish_wn_col (the start column of the current char).
 	local _tuish_wn_i=0 _tuish_wn_col=0 _tuish_wn_b0 _tuish_wn_b1 _tuish_wn_b2 _tuish_wn_cp _tuish_wn_n _tuish_wn_ch _tuish_wn_j _tuish_wn_out='' _tuish_wn_ow=0
@@ -266,6 +348,7 @@ tuish_str_window ()
 	done
 	TUISH_SWINDOW=$_tuish_wn_out
 	TUISH_SWINDOW_W=$_tuish_wn_ow
+	_tuish_memo_put "n$2,$3 $_tuish_wn_str" "$_tuish_wn_ow $_tuish_wn_out"
 }
 
 # ─── Codepoint width classification ──────────────────────────────
@@ -550,6 +633,12 @@ _tuish_utf8_len ()
 # Result in _tuish_boff.
 _tuish_char_byte_off ()
 {
+	# The one decode behind tuish_str_left/right/char's slow paths, so memoing
+	# here covers all three. The count is part of the key: the same string
+	# answers differently for a different character offset.
+	eval "local _bo_s=\"\${$1}\""
+	if _tuish_memo_get "o$2 $_bo_s"
+	then _tuish_boff=$_tuish_memo_val; return; fi
 	local _bo_i=0 _bo_ci=0
 	while test $_bo_ci -lt $2
 	do
@@ -559,4 +648,5 @@ _tuish_char_byte_off ()
 		_bo_ci=$((_bo_ci + 1))
 	done
 	_tuish_boff=$_bo_i
+	_tuish_memo_put "o$2 $_bo_s" "$_bo_i"
 }

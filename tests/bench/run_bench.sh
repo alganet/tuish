@@ -17,7 +17,6 @@
 set -eu
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
-BENCH_FILE="$BENCH_DIR/bench_events.sh"
 
 run_one ()
 {
@@ -26,7 +25,10 @@ run_one ()
 	printf '  Shell: %s\n' "$1"
 	printf '========================================\n'
 	# Intentionally unquoted to allow multi-word commands like "busybox sh".
-	$1 "$BENCH_FILE" || printf '  (bench aborted under %s)\n' "$1"
+	for _bench in "$BENCH_DIR/bench_events.sh" "$BENCH_DIR/bench_paint.sh"
+	do
+		$1 "$_bench" || printf '  (%s aborted under %s)\n' "$(basename "$_bench")" "$1"
+	done
 	printf '\n'
 }
 

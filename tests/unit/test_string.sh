@@ -211,6 +211,45 @@ _t="X${_e}[1;33mY"
 tuish_str_window _t 0 1;  assert_eq "$TUISH_SWINDOW" "X${_e}[1;33m"           "window sgr: CSI before clip carried (colour state), never split"
 tuish_str_window _t 1 1;  assert_eq "$TUISH_SWINDOW" "${_e}[1;33mY"           "window sgr: multi-param CSI kept whole"
 
+# --- decode memo ---
+# The memo sits in front of the UTF-8 decoders (the ASCII fast paths never
+# consult it). Every assertion below runs the SAME call twice: the first is the
+# cold decode, the second is served from the memo and must agree exactly.
+_memo_pair ()   # $1 = call, $2 = result var, $3 = expected, $4 = label
+{
+	eval "$1"; eval "_mp_a=\$$2"
+	eval "$1"; eval "_mp_b=\$$2"
+	assert_eq "$_mp_a" "$3" "memo: $4 (cold)"
+	assert_eq "$_mp_b" "$3" "memo: $4 (hit)"
+}
+
+_t='日本語'
+_memo_pair 'tuish_str_width _t'      TUISH_SWIDTH  '6'    'width, CJK'
+_memo_pair 'tuish_str_left _t 2'     TUISH_SLEFT   '日本' 'left, CJK'
+_memo_pair 'tuish_str_window _t 0 4' TUISH_SWINDOW '日本' 'window, CJK'
+
+# The key is compared as a QUOTED case pattern, so a string of glob
+# metacharacters must match only itself. Unquoted, '*' would hit every
+# subsequent lookup and hand back the previous answer — silently wrong widths
+# and a corrupted screen. These are the entries that would collide.
+_t='┤*┤'   ; tuish_str_width _t; assert_eq "$TUISH_SWIDTH" "3" "memo: glob '*' seeded"
+_t='┤?┤'   ; tuish_str_width _t; assert_eq "$TUISH_SWIDTH" "3" "memo: glob '?' not matched by '*' entry"
+_t='┤ab┤'  ; tuish_str_width _t; assert_eq "$TUISH_SWIDTH" "4" "memo: literal not matched by '*' entry"
+_t='┤[a-z]┤'; tuish_str_width _t; assert_eq "$TUISH_SWIDTH" "7" "memo: bracket expression matched literally"
+_t='┤*┤'   ; tuish_str_width _t; assert_eq "$TUISH_SWIDTH" "3" "memo: original glob entry still correct"
+
+# The count and the window bounds are part of the key: the same string must not
+# answer a different offset from the entry cached for another one.
+_t='日本語'
+tuish_str_left _t 1;      assert_eq "$TUISH_SLEFT"   '日'     "memo: left 1 distinct from left 2"
+tuish_str_left _t 2;      assert_eq "$TUISH_SLEFT"   '日本'   "memo: left 2 distinct from left 1"
+tuish_str_window _t 0 2;  assert_eq "$TUISH_SWINDOW" '日'     "memo: window 0,2 distinct from 0,4"
+tuish_str_window _t 0 4;  assert_eq "$TUISH_SWINDOW" '日本'   "memo: window 0,4 distinct from 0,2"
+
+# An untouched slot is the empty string; a lookup of the empty string must not
+# hit it and come back with an empty width.
+_t=''; tuish_str_width _t; assert_eq "$TUISH_SWIDTH" "0" "memo: empty string is not an empty slot"
+
 # --- tuish_str_pad ---
 # Fits a string to exactly N display columns. The pad loop it replaces was
 # hand-written in three examples, each counting characters.

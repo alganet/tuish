@@ -41,20 +41,14 @@ _w_col1=20
 _w_col2=24
 
 # ─── Pre-computation (runs once at startup) ──────────────────────
-# Stores each row in indexed variables so redraw never calls
-# tuish_str_width. Row types: h=hline, s=section, t=test.
-
-_w_pad_to ()
-{
-	# $1=string value, $2=target width, $3=actual width. Result in _w_padded.
-	_w_padded="$1"
-	local _rem=$(($2 - $3))
-	while test $_rem -gt 0
-	do
-		_w_padded="${_w_padded} "
-		_rem=$((_rem - 1))
-	done
-}
+# Stores each row in indexed variables. Row types: h=hline, s=section, t=test.
+#
+# This used to exist "so redraw never calls tuish_str_width", which was a real
+# concern when a width on a wide string cost milliseconds; str.sh memoizes that
+# now, and these rows would be cheap to measure per frame. What the precompute
+# still earns is the part that is not measurement: which cases PASS, and the
+# padded columns that make the table line up. That is state, not output, so it
+# belongs here and not in the render — see docs/event.md.
 
 _w_add_hline ()
 {
@@ -87,9 +81,8 @@ _w_add_test ()
 
 	# Pre-pad label
 	local _lab="$1"
-	tuish_str_width _lab
-	_w_pad_to "$1" $_w_col1 $TUISH_SWIDTH
-	eval "_w_tlab_${_w_n}=\"\$_w_padded\""
+	tuish_str_pad _lab $_w_col1
+	eval "_w_tlab_${_w_n}=\"\$TUISH_SPADDED\""
 
 	# Pre-pad text and record actual width
 	local _txt="$2"
@@ -97,11 +90,11 @@ _w_add_test ()
 	local _actual=$TUISH_SWIDTH
 	eval "_w_tactual_${_w_n}=$_actual"
 	eval "_w_texpect_${_w_n}=$3"
-	_w_pad_to "$2" $_w_col2 $_actual
-	eval "_w_ttxt_${_w_n}=\"\$_w_padded\""
+	tuish_str_pad _txt $_w_col2
+	eval "_w_ttxt_${_w_n}=\"\$TUISH_SPADDED\""
 
 	# Pre-build result column (padded to 8 display columns)
-	local _rtext _rp _rpad
+	local _rtext
 	if test "$_actual" -eq "$3"
 	then
 		eval "_w_tpass_${_w_n}=1"
@@ -111,10 +104,8 @@ _w_add_test ()
 		_rtext="${_actual}!=$3"
 	fi
 	eval "_w_tresult_${_w_n}=\"\$_rtext\""
-	_rp=$((8 - ${#_rtext}))
-	_rpad=''
-	while test $_rp -gt 0; do _rpad="${_rpad} "; _rp=$((_rp - 1)); done
-	eval "_w_trpad_${_w_n}=\"\$_rpad\""
+	tuish_str_pad _rtext 8
+	eval "_w_trpad_${_w_n}=\"\${TUISH_SPADDED#\"\$_rtext\"}\""
 
 	_w_n=$((_w_n + 1))
 }

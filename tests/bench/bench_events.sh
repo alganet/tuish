@@ -70,7 +70,13 @@ sc_r_arrow ()     { _tuish_resolve_event E 91 65; }
 sc_r_modkey ()    { _tuish_resolve_event E 91 49 59 53 65; }
 sc_r_modfkey ()   { _tuish_resolve_event E 91 49 53 59 53 126; }
 
-# Width (str_width takes a variable NAME)
+# Width (str_width takes a variable NAME).
+#
+# These re-measure the SAME string every iteration, so since the decode memo landed
+# (str.sh) the non-ASCII ones report the memo's hit cost, not the decoder's. That is
+# the realistic number for chrome redrawn verbatim each frame — but it is no longer
+# the cost of decoding, so do not read it as one. tests/bench/bench_paint.sh carries
+# paired hot/cold scenarios that keep both visible.
 sc_w_ascii ()     { tuish_str_width _s_ascii; }
 sc_w_latin ()     { tuish_str_width _s_latin; }
 sc_w_cjk ()       { tuish_str_width _s_cjk; }

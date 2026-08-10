@@ -90,6 +90,35 @@ cjk="中文hi"
 tuish_str_width cjk          # TUISH_SWIDTH = 6  (2+2+1+1)
 ```
 
+### Cost, and the memo
+
+There are two speeds here, and they are three orders of magnitude apart.
+
+Under `LC_ALL=C` a string of printable ASCII takes a fast path: every character is
+one column, so the width **is** the byte count. That is ~15 µs. Anything else is
+decoded byte by byte through `_tuish_ord` and `_tuish_char_width`, which is ~4.5 ms
+for a 60-column box rule. And the test is per **string**, not per character: one
+non-ASCII byte puts the whole string on the slow path, so a 20-column label with a
+single `┤` in it costs ~500 µs.
+
+That matters more than it sounds, because `tuish_text` runs a width pass on every
+draw and the default draw backend is Unicode. A UTF-8 app was paying milliseconds
+per label and tens of milliseconds per frame *measuring* text before writing a byte.
+
+So the decoders sit behind an exact-match memo — a handful of most-recent
+(string → answer) entries, consulted only on the slow path. The key is compared
+literally, so it cannot return a wrong answer; a miss just runs the decoder that was
+going to run anyway. It works because the expensive strings are the **repeated**
+ones: rules, borders, box chrome and fixed labels are redrawn verbatim every frame,
+while the content that genuinely differs row to row is usually prose, which took the
+ASCII path already.
+
+Measured on a frame of one box, three rules, six Unicode labels and forty rows of
+prose: **34 ms → 6.6 ms**. Nothing about this is visible in the API — the only way to
+notice it is that frames got cheap. `tests/bench/bench_paint.sh` tracks it, with
+paired hot/cold scenarios so a regression that defeats the memo shows up as the two
+converging.
+
 ## UTF-8 Internals
 
 These internal functions handle byte-level UTF-8 processing under `LC_ALL=C`:
