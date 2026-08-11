@@ -20,6 +20,7 @@
 _tuish_init_tables ()
 {
 	local _tuish_ord_i=1 _tuish_ord_chr='' _tuish_ord_d1 _tuish_ord_d2 _tuish_ord_d3
+	local _tuish_ord_fmt='' _tuish_ord_esc='' _tuish_ord_all='' _tuish_ord_rest='' _tuish_ord_next=''
 	if printf -v _tuish_ord_chr 'x' >/dev/null 2>&1 && test "$_tuish_ord_chr" = 'x'
 	then
 		# bash/zsh: printf -v avoids all subshells
@@ -30,20 +31,37 @@ _tuish_init_tables ()
 			eval "_tuish_chr_$_tuish_ord_i=\"\$_tuish_ord_chr\""
 			_tuish_ord_i=$((_tuish_ord_i + 1))
 		done
-	elif test $_tuish_printf -eq 0
-	then
-		# mksh: builtin echo -ne with \0NNN octal (no external printf).
-		# The trailing 'X' is a sentinel — see the note below.
-		while test $_tuish_ord_i -le 255
-		do
-			_tuish_ord_d1=$((_tuish_ord_i / 64)); _tuish_ord_d2=$(( (_tuish_ord_i / 8) % 8 )); _tuish_ord_d3=$((_tuish_ord_i % 8))
-			_tuish_ord_chr=$(echo -ne "\\0${_tuish_ord_d1}${_tuish_ord_d2}${_tuish_ord_d3}X")
-			_tuish_ord_chr="${_tuish_ord_chr%X}"
-			eval "_tuish_chr_$_tuish_ord_i=\"\$_tuish_ord_chr\""
-			_tuish_ord_i=$((_tuish_ord_i + 1))
-		done
 	else
-		# ksh93/busybox: one subshell per char (down from two).
+		# No `printf -v`: ONE subshell for the whole table.
+		#
+		# Which shells land here is a capability question, not a name — this build of
+		# ksh93 has `printf -v` and takes the branch above, an older one would not.
+		# Measured here: mksh and busybox take this path (and so does dash), mksh via
+		# the echo -ne emitter below.
+		#
+		# It used to be one per character — 255 of them — and on a shell that has no
+		# fork to make a subshell with (the wasm/browser target) that was 86% of the
+		# time it took to load ALL of tuish: 32ms of a 37ms library load. A command
+		# substitution there is not a call, it is a snapshot of the shell's state, so
+		# it costs more the more state exists and it is never as cheap as it looks.
+		#
+		# So emit all 255 bytes in a single printf and slice them apart with parameter
+		# expansion, which forks nothing. Same table, ~30ms cheaper at startup.
+		#
+		# Note what this does NOT need: a check that the payload came back 255 bytes
+		# long. A shell whose printf stops at 127 (yash does) returns 127 bytes here
+		# and produced exactly 127 usable entries the old way too — measured, both
+		# routes degrade identically — so the batch emit introduces no failure mode
+		# the per-character loop did not already have. Adding a length guard would
+		# only turn that long-standing degradation into a new hard abort at load.
+		# tests/unit/test_ord_table.sh is where a short table gets caught.
+		#
+		# Two things make the slicing safe, and neither is optional:
+		#   * compat.sh pins LC_ALL=C, so `?` matches one BYTE. Under a UTF-8 locale it
+		#     would match a CHARACTER and the high half of the table would misalign.
+		#   * $_tuish_ord_next is a suffix of $_tuish_ord_rest by construction, and it
+		#     is QUOTED inside the %-expansion, so it is matched literally — bytes that
+		#     are pattern metacharacters (\ * ? [) cannot act as a pattern.
 		#
 		# The trailing 'X' sentinel is load-bearing: command substitution strips
 		# TRAILING NEWLINES, so a bare $(printf '\012') yields the EMPTY STRING and
@@ -51,13 +69,35 @@ _tuish_init_tables ()
 		# rest survive.) Nothing read chr_10 until bracketed-paste capture needed a
 		# newline, at which point pasted line breaks vanished on exactly the shells
 		# that take this branch — busybox, which is the browser/wasm target. Append a
-		# sentinel byte and strip it back off, and the character survives.
+		# sentinel byte and strip it back off, and the character survives. The payload
+		# now ends at byte 255 rather than at whatever character is being built, so
+		# nothing is at risk today; it stays because the next person to change the
+		# range should not have to rediscover this.
+		#
+		# An explicit `if`, not `test ... && assign`: the latter returns non-zero on
+		# the branch not taken, which trips `set -euf` callers (same reason as in
+		# _tuish_ord_hi below).
+		if test $_tuish_printf -eq 0
+		then _tuish_ord_esc='\0'   # no usable printf (mksh): echo -ne wants \0NNN
+		else _tuish_ord_esc='\'    # printf wants \NNN
+		fi
 		while test $_tuish_ord_i -le 255
 		do
 			_tuish_ord_d1=$((_tuish_ord_i / 64)); _tuish_ord_d2=$(( (_tuish_ord_i / 8) % 8 )); _tuish_ord_d3=$((_tuish_ord_i % 8))
-			_tuish_ord_chr=$(printf "\\${_tuish_ord_d1}${_tuish_ord_d2}${_tuish_ord_d3}X")
-			_tuish_ord_chr="${_tuish_ord_chr%X}"
-			eval "_tuish_chr_$_tuish_ord_i=\"\$_tuish_ord_chr\""
+			_tuish_ord_fmt="${_tuish_ord_fmt}${_tuish_ord_esc}${_tuish_ord_d1}${_tuish_ord_d2}${_tuish_ord_d3}"
+			_tuish_ord_i=$((_tuish_ord_i + 1))
+		done
+		if test $_tuish_printf -eq 0
+		then _tuish_ord_all=$(echo -ne "${_tuish_ord_fmt}X")
+		else _tuish_ord_all=$(printf "${_tuish_ord_fmt}X")
+		fi
+		_tuish_ord_rest="${_tuish_ord_all%X}"
+		_tuish_ord_i=1
+		while test $_tuish_ord_i -le 255
+		do
+			_tuish_ord_next="${_tuish_ord_rest#?}"
+			eval "_tuish_chr_$_tuish_ord_i=\${_tuish_ord_rest%\"\$_tuish_ord_next\"}"
+			_tuish_ord_rest="$_tuish_ord_next"
 			_tuish_ord_i=$((_tuish_ord_i + 1))
 		done
 	fi
