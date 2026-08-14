@@ -85,6 +85,7 @@ is optional -- pick what you need:
 | `clip.sh`     | System clipboard (OSC 52)                       |
 | `draw.sh`     | Box drawing with styles and junctions           |
 | `hl.sh`       | Generic code highlighting (standalone)          |
+| `md.sh`       | Markdown to a record stream (standalone)        |
 | `host.sh`     | Hosting several live apps in one loop           |
 
 ## Examples
@@ -119,6 +120,7 @@ editor, and what the website does with all of them.
 - [Key Bindings (keybind.sh)](docs/keybind.md) -- declarative event dispatch
 - [System Clipboard (clip.sh)](docs/clip.md) -- OSC 52 copy, and how paste works
 - [Code Highlighting (hl.sh)](docs/hl.md) -- one generic lexer, token styles, fence modes
+- [Markdown (md.sh)](docs/md.md) -- the record stream, the sink, the supported subset
 - [Shell Compatibility](docs/compatibility.md) -- supported shells, limits, workarounds
 
 ## License

@@ -30,6 +30,16 @@ compat.sh sets `LC_ALL=C` and `LC_CTYPE=C` at source time for consistent byte ha
 - `viewport.sh` requires `term.sh` and `event.sh`
 - `draw.sh` requires `term.sh` and `str.sh`
 
+`hl.sh` and `md.sh` are the exceptions to the rule above: both are **standalone**
+and require nothing at all, not even `compat.sh`. `md.sh` uses `hl.sh` when it is
+present and degrades to unhighlighted code lines when it is not.
+
+That is deliberate. Sourcing `compat.sh` applies `set -euf` and pins `LC_ALL=C` at
+source time, which a general-purpose script — a site generator, say — usually
+cannot accept: `set -f` alone breaks any use of filename globbing. Keeping the two
+document modules dependency-free lets such a script source them directly, and lets
+the same parse feed both it and a full tuish app.
+
 ## Timeout Resolution
 
 | Resolution               | Shells                            | Idle Timeout                                  |
@@ -112,6 +122,24 @@ The `tuish_str_*` functions use `${var:off:len}` parameter expansion,
 which is supported by bash, zsh, ksh93, and mksh but is not part of the
 POSIX standard. Availability on busybox sh depends on the build
 configuration.
+
+`hl.sh` and `md.sh` avoid it entirely, so they also run on shells outside the
+supported set (dash, for one) — useful when a build script is invoked as `sh`.
+
+Two pattern rules those two modules follow, both learned the hard way:
+
+- **Never store a pattern in a variable.** `${s%%$PAT*}` matches on bash, mksh,
+  dash and busybox, and on zsh silently does *not* — it needs `${~PAT}` and
+  otherwise returns the whole string, so the failure is a wrong result rather than
+  an error.
+- **Enumerate character classes; do not use ranges.** POSIX leaves range behaviour
+  outside the C locale unspecified, and ksh93 honours that: in a UTF-8 locale it
+  collates `ç` inside `A-Za-z`. Any code that must produce identical output under
+  both `LC_ALL=C` and the user's own locale has to spell the class out.
+
+Bracket and backtick literals inside `${…}` are written as quoted expansions, never
+backslash-escaped: `${v%%\](*}` is a zsh parse error, and an escaped backtick makes
+mksh read an unterminated command substitution and abandon the whole file.
 
 ## Known Terminal Limitations
 
