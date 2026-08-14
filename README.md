@@ -84,6 +84,7 @@ is optional -- pick what you need:
 | `keybind.sh`  | Declarative event-to-action dispatch            |
 | `clip.sh`     | System clipboard (OSC 52)                       |
 | `draw.sh`     | Box drawing with styles and junctions           |
+| `hl.sh`       | Generic code highlighting (standalone)          |
 | `host.sh`     | Hosting several live apps in one loop           |
 
 ## Examples
@@ -117,6 +118,7 @@ editor, and what the website does with all of them.
 - [Line Buffer (buf.sh)](docs/buf.md) -- indexed line storage
 - [Key Bindings (keybind.sh)](docs/keybind.md) -- declarative event dispatch
 - [System Clipboard (clip.sh)](docs/clip.md) -- OSC 52 copy, and how paste works
+- [Code Highlighting (hl.sh)](docs/hl.md) -- one generic lexer, token styles, fence modes
 - [Shell Compatibility](docs/compatibility.md) -- supported shells, limits, workarounds
 
 ## License
